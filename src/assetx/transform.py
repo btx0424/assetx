@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import List
 import shutil
+import tempfile
 
 
 @dataclass
@@ -25,7 +26,7 @@ class MujocoAsset:
             raise FileNotFoundError(f"Meshdir {meshdir} not found")
         return MujocoAsset(xml_path, spec, meshdir)
     
-    def save(self, path: str | Path) -> MujocoAsset:
+    def save(self, path: str | Path, *, copy_meshes: bool = False) -> MujocoAsset:
         """Save the asset to a directory.
 
         Writes model.xml and the mesh directory under the given path.
@@ -33,6 +34,9 @@ class MujocoAsset:
 
         Args:
             path: Output directory path (not an XML file path). Created if missing.
+            copy_meshes: If False (default), the mesh tree is copied with symlinks
+                preserved (no mesh bytes copied when the asset uses symlinks, e.g. from
+                assemble). If True, symlinks are dereferenced for a full, self-contained copy.
 
         Returns:
             A new MujocoAsset loaded from the saved files.
@@ -49,9 +53,8 @@ class MujocoAsset:
         root.mkdir(parents=True, exist_ok=False)
         self.spec.compile()
         self.spec.to_file(str(root / "model.xml"))
-        # copy the meshdir to the new file
         dest = root / self.spec.meshdir
-        shutil.copytree(self.meshdir, dest, symlinks=True)
+        shutil.copytree(self.meshdir, dest, symlinks=not copy_meshes)
         return MujocoAsset.from_file(str(root / "model.xml"))
 
 
@@ -165,6 +168,21 @@ class RemoveSubtrees(Transform):
         return replace(asset, spec=spec)
 
 
+class SelectSubtree(Transform):
+    def __init__(self, subtree_path: str) -> None:
+        self.subtree_path = subtree_path
+
+    def transform(self, asset: MujocoAsset) -> MujocoAsset:
+        spec = mujoco.MjSpec()
+        spec.copy_during_attach = True
+        frame = spec.worldbody.add_frame()
+        subtree = spec.body(self.subtree_path)
+        if subtree is None:
+            raise ValueError(f"SelectSubtree: body {self.subtree_path!r} not found")
+        frame.attach_body(subtree)
+        return replace(asset, spec=spec)
+
+
 class RemoveGeoms(Transform):
     def __init__(self, geom_names: list[str]) -> None:
         self.geom_names = geom_names
@@ -175,6 +193,7 @@ class RemoveGeoms(Transform):
             geom: mujoco.MjsGeom
             if geom.name in self.geom_names:
                 spec.delete(geom)
+        spec.compile()
         return replace(asset, spec=spec)
 
 
@@ -188,5 +207,6 @@ class RenameBodies(Transform):
             body: mujoco.MjsBody
             if body.name in self.body_names:
                 body.name = self.body_names[body.name]
+        spec.compile()
         return replace(asset, spec=spec)
 

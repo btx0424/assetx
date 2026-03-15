@@ -1,6 +1,6 @@
 import mujoco
 import mujoco.viewer
-from assetx.compose import assemble, JointCfg
+from assetx.assemble import assemble, JointCfg
 from assetx.transform import (
     MujocoAsset,
     Compose,
@@ -10,7 +10,7 @@ from assetx.transform import (
     RenameBodies,
 )
 
-def test_compose_specs():
+def test_assemble_asset():
     parent_xml_path = "/home/btx0424/lab51/unitree_ros/robots/a2_description/a2.xml"
     child_xml_path = "/home/btx0424/lab51/piper_isaac_sim/piper_description/mujoco_model/piper_description.xml"
 
@@ -18,7 +18,7 @@ def test_compose_specs():
     child = MujocoAsset.from_file(child_xml_path)
     print(parent.meshdir, child.meshdir)
 
-    asset = assemble(
+    assembled_asset = assemble(
         parent,
         child,
         "base_link",
@@ -27,32 +27,25 @@ def test_compose_specs():
         rotation=(0.0, 0.0, 0.0),
         joint_cfg=JointCfg(type="fixed", range=(0, 0)),
     )
+    print(assembled_asset)
 
     transform = Compose([
-        # ReplaceCylinderWithCapsule(),
-        # MergeBodies(parent_path="base_link", child_path="arm_base_link"),
-        # RenameBodies(body_names={"arm_link7": "gripper_left", "arm_link8": "gripper_right"}),
+        ReplaceCylinderWithCapsule(),
+        RenameBodies(body_names={"arm_link7": "gripper_left", "arm_link8": "gripper_right"}),
+        RemoveSubtrees(subtree_paths=["gripper_left", "gripper_right"]),
     ])
 
-    new_asset = transform.transform(asset)
-    model = new_asset.spec.compile()
-    new_asset.spec.to_file("assembled.xml")
+    transformed_asset = transform.transform(assembled_asset)
+    
+    model = transformed_asset.spec.compile()
+    transformed_asset.save("./assembled", copy_meshes=False)
 
+    model = mujoco.MjModel.from_xml_path("./assembled/model.xml")
     data = mujoco.MjData(model)
     with mujoco.viewer.launch_passive(model, data) as viewer:
         while True:
             viewer.sync()
-    
-    import mujoco_usd_converter
-    import usdex.core
-    from pxr import Sdf, Usd
-
-    converter = mujoco_usd_converter.Converter()
-    asset: Sdf.AssetPath = converter.convert("assembled.xml", "assembled.usda")
-    stage: Usd.Stage = Usd.Stage.Open(asset.path)
-    # modify further using Usd or usdex.core functionality
-    usdex.core.saveStage(stage)
 
 
 if __name__ == "__main__":
-    test_compose_specs()
+    test_assemble_asset()
