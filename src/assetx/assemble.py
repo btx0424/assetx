@@ -1,7 +1,7 @@
 import assetx
 import mujoco
-from dataclasses import dataclass
 from assetx.transform import MujocoAsset
+from assetx.common import JointCfg
 from pathlib import Path
 from scipy.spatial.transform import Rotation as sRot
 import tempfile
@@ -10,17 +10,6 @@ import shutil
 
 TMP_DIR = Path(assetx.__path__[0]) / "tmp"
 shutil.rmtree(TMP_DIR, ignore_errors=True)
-
-
-@dataclass
-class JointCfg:
-    type: str
-    axis: tuple[float, float, float] = (0, 0, 1)
-    range: tuple[float, float] = (0, 0)
-
-    def __post_init__(self):
-        if self.type not in ["fixed", "hinge", "slide"]:
-            raise ValueError(f"Invalid joint type: {self.type}")
 
 
 def assemble(
@@ -97,7 +86,7 @@ if __name__ == "__main__":
         child_prefix="arm_",
         translation=(0.05, 0.0, 0.10),
         rotation=(0.0, 0.0, 0.0),
-        joint_cfg=JointCfg(type="fixed"),
+        joint_cfg=None,
     )
     print(assembled_asset)
     assembled_asset.save("./assembled")

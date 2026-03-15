@@ -4,58 +4,8 @@ import mujoco
 import numpy as np
 from abc import ABC, abstractmethod
 from scipy.spatial.transform import Rotation as sRot
-from dataclasses import dataclass, replace
-from pathlib import Path
-from typing import List
-import shutil
-import tempfile
-
-
-@dataclass
-class MujocoAsset:
-    xml_path: str
-    spec: mujoco.MjSpec
-    meshdir: Path
-
-    @staticmethod
-    def from_file(xml_path: str) -> MujocoAsset:
-        spec = mujoco.MjSpec.from_file(xml_path)
-        # resolve the actual meshdir from the spec
-        meshdir = Path(xml_path).parent / spec.meshdir
-        if not meshdir.exists():
-            raise FileNotFoundError(f"Meshdir {meshdir} not found")
-        return MujocoAsset(xml_path, spec, meshdir)
-    
-    def save(self, path: str | Path, *, copy_meshes: bool = False) -> MujocoAsset:
-        """Save the asset to a directory.
-
-        Writes model.xml and the mesh directory under the given path.
-        The directory must not already exist.
-
-        Args:
-            path: Output directory path (not an XML file path). Created if missing.
-            copy_meshes: If False (default), the mesh tree is copied with symlinks
-                preserved (no mesh bytes copied when the asset uses symlinks, e.g. from
-                assemble). If True, symlinks are dereferenced for a full, self-contained copy.
-
-        Returns:
-            A new MujocoAsset loaded from the saved files.
-
-        Raises:
-            ValueError: If path exists and is a file (path must be a directory).
-        """
-        root = Path(path)
-        if root.exists() and root.is_file():
-            raise ValueError(
-                f"path must be a directory, not a file: {path!r}. "
-                "Pass the output directory where model.xml and meshes will be written."
-            )
-        root.mkdir(parents=True, exist_ok=False)
-        self.spec.compile()
-        self.spec.to_file(str(root / "model.xml"))
-        dest = root / self.spec.meshdir
-        shutil.copytree(self.meshdir, dest, symlinks=not copy_meshes)
-        return MujocoAsset.from_file(str(root / "model.xml"))
+from dataclasses import replace
+from assetx.common import MujocoAsset, JointCfg
 
 
 class Transform(ABC):
@@ -165,6 +115,39 @@ class RemoveSubtrees(Transform):
             if subtree is None:
                 raise ValueError(f"RemoveSubtrees: body {subtree_path!r} not found")
             spec.delete(subtree)
+        return replace(asset, spec=spec)
+
+
+class RemoveJoints(Transform):
+    def __init__(self, joint_names: list[str]) -> None:
+        self.joint_names = joint_names
+
+    def transform(self, asset: MujocoAsset) -> MujocoAsset:
+        spec = asset.spec.copy()
+        for joint in spec.joints:
+            joint: mujoco.MjsJoint
+            if joint.name in self.joint_names:
+                spec.delete(joint)
+        spec.compile()
+        return replace(asset, spec=spec)
+
+
+class AddJoint(Transform):
+    def __init__(self, body_path: str, joint_cfg: JointCfg) -> None:
+        self.body_path = body_path
+        self.joint_cfg = joint_cfg
+    
+    def transform(self, asset: MujocoAsset) -> MujocoAsset:
+        spec = asset.spec.copy()
+        body = spec.body(self.body_path)
+        if body is None:
+            raise ValueError(f"AddJoint: body {self.body_path!r} not found")
+        joint = body.add_joint()
+        joint.name = self.joint_cfg.name
+        joint.type = self.joint_cfg.type
+        joint.axis = self.joint_cfg.axis
+        joint.range = self.joint_cfg.range
+        spec.compile()
         return replace(asset, spec=spec)
 
 
