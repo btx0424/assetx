@@ -27,6 +27,11 @@ class MujocoAsset:
     @staticmethod
     def from_file(xml_path: str) -> MujocoAsset:
         spec = mujoco.MjSpec.from_file(xml_path)
+        if len(spec.worldbody.bodies) > 1:
+            raise ValueError("MujocoAsset must have only one body in the worldbody")
+        root_body = spec.worldbody.first_body()
+        root_body.pos = (0, 0, 0)
+        root_body.quat = (1, 0, 0, 0)
         # resolve the actual meshdir from the spec
         meshdir = Path(xml_path).parent / spec.meshdir
         if not meshdir.exists():

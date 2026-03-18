@@ -1,5 +1,17 @@
 # assetx
 
+If you encounter issues when using IsaacSim, run
+
+```bash
+pip uninstall usd-core usd-exchange
+```
+
+```bash
+git clone --depth=1 --recursive --branch=develop https://github.com/isaac-sim/IsaacSim
+git sparse-checkout init --cone
+git sparse-checkout set source/extensions/isaacsim.asset.importer.mjcf
+```
+
 **Composable, reproducible robot descriptions from base assets and recipes.**
 
 ## Introduction
