@@ -37,3 +37,66 @@ By making composition explicit (assemble + transform), we get:
 - **Clear provenance**: The final model is traceable back to specific assets and recipe steps.
 
 The current implementation is a step toward this vision: it already supports assembling MJCF assets and a set of transforms, but the pipeline, recipe format, and asset lifecycle are still evolving. This README describes the direction we want to reach.
+
+## Current Structure
+
+The stable package surface now lives under `assetx.core`:
+
+- `assetx.core.asset`: `MujocoAsset`, `JointCfg`
+- `assetx.core.assemble`: multi-input MJCF composition
+- `assetx.core.transforms`: unary MJCF transforms
+- `assetx.core.builders`: function-based asset builder registration
+
+Research tooling is intentionally outside the package surface under `tools/research/`.
+Conversion utilities such as URDF import and USD mesh extraction live under `tools/`.
+
+## Function-Based Builders
+
+Recipes are plain Python functions returning `MujocoAsset`. Builder registration is optional and can be added with a decorator.
+
+```python
+from assetx import (
+    MujocoAsset,
+    RenameBodies,
+    ReplaceCylinderWithCapsule,
+    apply_transforms,
+    assemble,
+    asset_builder,
+)
+
+
+@asset_builder
+def load_base() -> MujocoAsset:
+    return MujocoAsset.from_file("assets/a2/model.xml")
+
+
+@asset_builder
+def load_arm() -> MujocoAsset:
+    return MujocoAsset.from_file("assets/piper/model.xml")
+
+
+@asset_builder
+def build_a2_with_piper(
+    base: MujocoAsset,
+    arm: MujocoAsset,
+) -> MujocoAsset:
+    robot = assemble(
+        parent=base,
+        child=arm,
+        parent_link="base_link",
+        child_prefix="arm_",
+    )
+    return apply_transforms(
+        robot,
+        RenameBodies({"arm_link7": "gripper_left", "arm_link8": "gripper_right"}),
+        ReplaceCylinderWithCapsule(),
+    )
+```
+
+This keeps the recipe API simple:
+
+- transforms stay unary
+- assembly stays multi-input
+- recipes are normal Python call graphs that IDEs can navigate
+
+See [examples/a2_piper.py](/home/btx0424/lab51/aa-projects/assetx/examples/a2_piper.py) for a concrete builder-based example that assembles an A2 base with a Piper arm.

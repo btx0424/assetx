@@ -22,10 +22,23 @@ classifiers = [
 ]
 dependencies = [
     "mujoco",
+    "scipy",
     "mujoco-usd-converter",
 ]
 
-[project.scripts]
-extract-meshes = "assetx.cli:extract_meshes_cli"
-urdf2mjcf = "assetx.cli:urdf2mjcf_cli"
+[project.optional-dependencies]
+research = [
+    "mujoco-warp",
+    "trimesh",
+    "viser",
+]
+usd = [
+    "trimesh",
+    "usd-core",
+]
 
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

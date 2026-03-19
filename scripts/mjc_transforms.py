@@ -32,7 +32,7 @@ def test_assemble_asset():
     transform = Compose([
         ReplaceCylinderWithCapsule(),
         RenameBodies(body_names={"arm_link7": "gripper_left", "arm_link8": "gripper_right"}),
-        RemoveSubtrees(subtree_paths=["gripper_left", "gripper_right"]),
+        # RemoveSubtrees(subtree_paths=["gripper_left", "gripper_right"]),
     ])
 
     transformed_asset = transform.transform(assembled_asset)
