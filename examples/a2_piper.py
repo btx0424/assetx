@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 from assetx import MujocoAsset, assemble, asset_builder
+from assetx.transform import Compose,ReplaceCylinderWithCapsule, RenameBodies
 
 
 @asset_builder
@@ -18,7 +19,7 @@ def load_piper(xml_path: str | Path) -> MujocoAsset:
 
 @asset_builder
 def build_a2_piper(base: MujocoAsset, arm: MujocoAsset) -> MujocoAsset:
-    return assemble(
+    asset = assemble(
         parent=base,
         child=arm,
         parent_link="base_link",
@@ -26,6 +27,11 @@ def build_a2_piper(base: MujocoAsset, arm: MujocoAsset) -> MujocoAsset:
         translation=(0.05, 0.0, 0.10),
         rotation=(0.0, 0.0, 0.0),
     )
+    transform = Compose([
+        ReplaceCylinderWithCapsule(),
+        RenameBodies({"arm_link7": "gripper_left", "arm_link8": "gripper_right"}),
+    ])
+    return transform.transform(asset)
 
 
 def main() -> None:
@@ -43,6 +49,13 @@ def main() -> None:
     robot = build_a2_piper(load_a2(args.a2), load_piper(args.piper))
     saved = robot.save(args.output)
     print(saved.xml_path)
+
+    import mujoco.viewer
+    model = robot.spec.compile()
+    data = mujoco.MjData(model)
+    with mujoco.viewer.launch_passive(model, data) as viewer:
+        while True:
+            viewer.sync()
 
 
 if __name__ == "__main__":
