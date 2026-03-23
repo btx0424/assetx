@@ -187,20 +187,15 @@ def _append_joint_and_recurse(
         visual_only = int(geom.contype) == 0 and int(geom.conaffinity) == 0
         vis_el = _geom_to_urdf(spec, geom, meshdir, visual=True)
         col_el = _geom_to_urdf(spec, geom, meshdir, visual=False)
-        # Visual-only geoms: always show. Collision-enabled meshes: dual visual+collision.
+        # Visual-only geoms: emit visual only.
+        # Collision-enabled meshes: dual visual+collision.
         # Collision primitives (box/capsule/...) without a separate visual geom: URDF collision only.
         emit_visual = visual_only or geom.type == mujoco.mjtGeom.mjGEOM_MESH
 
         if emit_visual and vis_el is not None:
             link.append(vis_el)
-        if col_el is not None:
-            if not visual_only:
-                link.append(col_el)
-            elif vis_el is None or (
-                ET.tostring(vis_el, encoding="unicode")
-                != ET.tostring(col_el, encoding="unicode")
-            ):
-                link.append(col_el)
+        if col_el is not None and not visual_only:
+            link.append(col_el)
 
     free_j, other_j = _classify_joints(body.joints)
 
