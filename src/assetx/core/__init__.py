@@ -2,6 +2,7 @@ from assetx.core.asset import JointCfg, MujocoAsset
 from assetx.core.assemble import assemble
 from assetx.core.builders import asset_builder, get_asset_builder, list_asset_builders
 from assetx.core.transforms import (
+    AddSite,
     AddJoint,
     Compose,
     MergeBodies,
@@ -16,6 +17,7 @@ from assetx.core.transforms import (
 )
 
 __all__ = [
+    "AddSite",
     "AddJoint",
     "Compose",
     "JointCfg",

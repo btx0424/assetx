@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 
 from assetx import MujocoAsset, assemble, asset_builder
-from assetx.transform import Compose,ReplaceCylinderWithCapsule, RenameBodies
+from assetx.transform import Compose, ReplaceCylinderWithCapsule, RenameBodies, AddSite
 
 
 @asset_builder
@@ -27,17 +27,37 @@ def build_a2_piper(base: MujocoAsset, arm: MujocoAsset) -> MujocoAsset:
         translation=(0.05, 0.0, 0.10),
         rotation=(0.0, 0.0, 0.0),
     )
-    transform = Compose([
-        ReplaceCylinderWithCapsule(),
-        RenameBodies({"arm_link7": "gripper_left", "arm_link8": "gripper_right"}),
-    ])
+    transform = Compose(
+        [
+            ReplaceCylinderWithCapsule(),
+            RenameBodies(
+                {
+                    "arm_link7": "gripper_right",
+                    "arm_link8": "gripper_left",
+                    "arm_link6": "gripper_base",
+                }
+            ),
+            AddSite(
+                body_path="gripper_base",
+                name="grasp_site",
+                pos=(0.05, 0.0, 0.0),
+                size=(0.01, 0.01, 0.01),
+                type="sphere",
+                rgba=(1.0, 0.0, 0.0, 0.6),
+            ),
+        ]
+    )
     return transform.transform(asset)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build an A2 + Piper MJCF asset.")
-    parser.add_argument("--a2", type=Path, required=True, help="Path to the A2 MJCF XML file.")
-    parser.add_argument("--piper", type=Path, required=True, help="Path to the Piper MJCF XML file.")
+    parser.add_argument(
+        "--a2", type=Path, required=True, help="Path to the A2 MJCF XML file."
+    )
+    parser.add_argument(
+        "--piper", type=Path, required=True, help="Path to the Piper MJCF XML file."
+    )
     parser.add_argument(
         "--output",
         type=Path,
@@ -51,6 +71,7 @@ def main() -> None:
     print(saved.xml_path)
 
     import mujoco.viewer
+
     model = robot.spec.compile()
     data = mujoco.MjData(model)
     with mujoco.viewer.launch_passive(model, data) as viewer:

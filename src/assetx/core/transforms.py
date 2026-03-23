@@ -138,6 +138,47 @@ class AddJoint(Transform):
         return replace(asset, spec=spec)
 
 
+class AddSite(Transform):
+    """Add a site to the asset."""
+
+    def __init__(
+        self,
+        body_path: str,
+        name: str,
+        *,
+        pos: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        quat: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0),
+        size: tuple[float, float, float] = (0.005, 0.005, 0.005),
+        type: str = "sphere",
+        rgba: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 1.0),
+    ) -> None:
+        if type not in {"sphere", "capsule", "ellipsoid", "cylinder", "box"}:
+            raise ValueError(f"Invalid site type: {type}")
+        self.body_path = body_path
+        self.name = name
+        self.pos = pos
+        self.quat = quat
+        self.size = size
+        self.type = type
+        self.rgba = rgba
+
+    def transform(self, asset: MujocoAsset) -> MujocoAsset:
+        spec = asset.spec.copy()
+        body = spec.body(self.body_path)
+        if body is None:
+            raise ValueError(f"AddSite: body {self.body_path!r} not found")
+
+        site = body.add_site()
+        site.name = self.name
+        site.pos = self.pos
+        site.quat = self.quat
+        site.size = self.size
+        site.type = self.type
+        site.rgba = self.rgba
+        spec.compile()
+        return replace(asset, spec=spec)
+
+
 class SelectSubtree(Transform):
     def __init__(self, subtree_path: str) -> None:
         self.subtree_path = subtree_path
