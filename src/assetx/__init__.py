@@ -17,10 +17,13 @@ from assetx.core import (
     ReplaceCylinderWithCapsule,
     SelectSubtree,
     Transform,
+    add_preview_light,
     apply_transforms,
     assemble,
     asset_builder,
+    compile_for_preview,
     get_asset_builder,
+    launch_preview,
     list_asset_builders,
 )
 
@@ -41,9 +44,12 @@ __all__ = [
     "ReplaceCylinderWithCapsule",
     "SelectSubtree",
     "Transform",
+    "add_preview_light",
     "apply_transforms",
     "assemble",
     "asset_builder",
+    "compile_for_preview",
     "get_asset_builder",
+    "launch_preview",
     "list_asset_builders",
 ]

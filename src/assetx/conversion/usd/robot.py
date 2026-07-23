@@ -373,9 +373,11 @@ def _add_joint(mj_body: mujoco.MjsBody, joint_info: JointInfo) -> None:
             pos=pos,
         )
         if lower is not None and upper is not None:
-            mj_joint.range = np.array(
-                [math.radians(float(lower)), math.radians(float(upper))]
-            )
+            lo = math.radians(float(lower))
+            hi = math.radians(float(upper))
+            # Skip ±inf / non-finite bounds — omit range for a truly unlimited hinge.
+            if math.isfinite(lo) and math.isfinite(hi):
+                mj_joint.range = np.array([lo, hi])
         return
 
     if type_name == "PhysicsPrismaticJoint":
@@ -386,7 +388,9 @@ def _add_joint(mj_body: mujoco.MjsBody, joint_info: JointInfo) -> None:
             pos=pos,
         )
         if lower is not None and upper is not None:
-            mj_joint.range = np.array([float(lower), float(upper)])
+            lo, hi = float(lower), float(upper)
+            if math.isfinite(lo) and math.isfinite(hi):
+                mj_joint.range = np.array([lo, hi])
         return
 
     raise ValueError(f"Unsupported joint type: {type_name} ({joint.GetPath()})")

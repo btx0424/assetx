@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import math
+import re
+import warnings
 import xml.etree.ElementTree as ET
 from pathlib import Path
-import re
 from typing import Iterable
-import warnings
 
 import mujoco
 import numpy as np
@@ -41,13 +42,24 @@ def _sanitize_urdf_name(name: str, used: dict[str, int]) -> str:
     return s
 
 
+def _joint_range(jnt: mujoco.MjsJoint) -> tuple[float, float]:
+    return float(jnt.range[0]), float(jnt.range[1])
+
+
 def _joint_limited(jnt: mujoco.MjsJoint) -> bool:
-    if jnt.limited == mujoco.mjtLimited.mjLIMITED_TRUE:
-        return True
-    if jnt.limited == mujoco.mjtLimited.mjLIMITED_AUTO:
-        lo, hi = float(jnt.range[0]), float(jnt.range[1])
-        return lo < hi
-    return False
+    """True when the joint has a finite position range that should become URDF limits.
+
+    ``range="-inf inf"`` (or any non-finite bound) is treated as unlimited: MuJoCo may
+    still mark such joints ``limited``, but URDF should use ``continuous`` / omit
+    ``<limit>`` rather than emit ``±inf``.
+    """
+    lo, hi = _joint_range(jnt)
+    if not (math.isfinite(lo) and math.isfinite(hi) and lo < hi):
+        return False
+    if jnt.limited == mujoco.mjtLimited.mjLIMITED_FALSE:
+        return False
+    # TRUE or AUTO with a proper finite range.
+    return True
 
 
 def _mesh_filename(spec: mujoco.MjSpec, meshname: str, meshdir: str) -> str | None:
@@ -248,7 +260,7 @@ def _append_joint_and_recurse(
             ax, ay, az = _vec3(jnt.axis)
             ET.SubElement(joint_el, "axis", {"xyz": f"{ax} {ay} {az}"})
             if joint_type in ("revolute", "prismatic") and _joint_limited(jnt):
-                lo, hi = float(jnt.range[0]), float(jnt.range[1])
+                lo, hi = _joint_range(jnt)
                 ET.SubElement(
                     joint_el,
                     "limit",

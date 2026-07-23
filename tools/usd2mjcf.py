@@ -5,9 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-import mujoco
-import mujoco.viewer
-
+from assetx import launch_preview
 from assetx.conversion.usd import convert_usd_to_mjcf
 
 
@@ -32,7 +30,7 @@ def main() -> None:
     usd_path = args.path.resolve()
     print(f"loaded: {usd_path}")
 
-    _spec, model, xml_path, tree = convert_usd_to_mjcf(usd_path)
+    spec, model, xml_path, tree = convert_usd_to_mjcf(usd_path)
     print(tree.format())
     print()
     print(f"saved: {xml_path}")
@@ -46,10 +44,7 @@ def main() -> None:
     if args.no_viewer:
         return
 
-    data = mujoco.MjData(model)
-    with mujoco.viewer.launch_passive(model, data) as viewer:
-        while viewer.is_running():
-            viewer.sync()
+    launch_preview(spec)
 
 
 if __name__ == "__main__":

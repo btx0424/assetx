@@ -77,11 +77,6 @@ if __name__ == "__main__":
     print(asset.xml_path)
 
     if args.view:
-        import mujoco
-        import mujoco.viewer
+        from assetx import launch_preview
 
-        model = asset.spec.compile()
-        data = mujoco.MjData(model)
-        with mujoco.viewer.launch_passive(model, data) as viewer:
-            while True:
-                viewer.sync()
+        launch_preview(asset)

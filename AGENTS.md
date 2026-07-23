@@ -29,6 +29,7 @@ artifacts/              # generated models (gitignored)
 | `assemble.py` | `assemble(parent, child, …)` |
 | `transforms.py` | Unary `Transform` subclasses + `Compose` |
 | `builders.py` | `@asset_builder` |
+| `preview.py` | `launch_preview` (lit viewer copy; not saved) |
 
 Import from `assetx` or `assetx.core`.
 
@@ -86,7 +87,7 @@ PYTHONPATH=src python tools/usd2mjcf.py -p /path/to/robot.usd --no-viewer
 - Builders: named `MujocoAsset` params (`base`, `arm`), not `*args`.
 - Naming: `build_a2_piper`, `RenameBodies`, modules `lowercase_with_underscores`.
 - Pure imports: no viewer launch or file deletion at import time.
-- CLI viewers are opt-out via `--no-viewer` where interactive.
+- CLI viewers are opt-out via `--no-viewer` where interactive; use `assetx.launch_preview` (adds a temporary key light, never written to disk).
 - `MujocoAsset.from_file` requires exactly one body under `worldbody`.
 - `assemble()` keeps a `TemporaryDirectory` alive on the returned asset (`_tmpdir`) until the asset is GC'd; call `save()` to persist.
 

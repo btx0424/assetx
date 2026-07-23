@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 
-import mujoco
-import mujoco.viewer
-
+from assetx import launch_preview
 from assetx.conversion.urdf2mjcf import urdf_to_mjcf
 
 
@@ -24,22 +21,33 @@ def main() -> None:
         help="MuJoCo compiler meshdir. Overrides any existing value when set.",
     )
     parser.add_argument(
+        "--package-path",
+        action="append",
+        default=None,
+        metavar="NAME=/path/to/pkg",
+        help=(
+            "Map a ROS package name to a filesystem root for package:// URIs. "
+            "Repeatable. Auto-discovery from the URDF location is used when omitted."
+        ),
+    )
+    parser.add_argument(
         "--no-viewer",
         action="store_true",
         help="Skip the MuJoCo viewer after conversion.",
     )
     args = parser.parse_args()
 
-    _spec, model, out_path = urdf_to_mjcf(args.path, meshdir=args.meshdir)
+    spec, _model, out_path = urdf_to_mjcf(
+        args.path,
+        meshdir=args.meshdir,
+        package_paths=args.package_path,
+    )
     print(out_path)
 
     if args.no_viewer:
         return
 
-    data = mujoco.MjData(model)
-    with mujoco.viewer.launch_passive(model, data) as viewer:
-        while viewer.is_running():
-            viewer.sync()
+    launch_preview(spec)
 
 
 if __name__ == "__main__":

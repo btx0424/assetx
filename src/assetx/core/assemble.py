@@ -9,6 +9,32 @@ from scipy.spatial.transform import Rotation as sRot
 from assetx.core.asset import JointCfg, MujocoAsset
 
 
+def _mesh_file_path(asset: MujocoAsset, mesh_file: str) -> Path:
+    """Resolve a mesh ``file`` attribute to an absolute filesystem path."""
+    path = Path(mesh_file)
+    if path.is_absolute():
+        return path.resolve()
+    return (asset.resolved_meshdir / path).resolve()
+
+
+def _mesh_source_dir(asset: MujocoAsset) -> Path:
+    """Directory that actually contains ``asset``'s mesh files.
+
+    Prefer the common parent of absolute mesh paths (URDF→MJCF often leaves
+    ``meshdir`` empty while ``file`` is absolute). Fall back to
+    ``resolved_meshdir``.
+    """
+    parents = {_mesh_file_path(asset, mesh.file).parent for mesh in asset.spec.meshes}
+    if len(parents) == 1:
+        return parents.pop()
+    if not parents:
+        return asset.resolved_meshdir
+    raise ValueError(
+        f"Meshes for {asset.spec.modelname!r} span multiple directories: "
+        f"{sorted(str(p) for p in parents)}. Put them under one folder or set meshdir."
+    )
+
+
 def assemble(
     parent: MujocoAsset,
     child: MujocoAsset,
@@ -51,21 +77,27 @@ def assemble(
     meshdir = tmp_dir / "meshes"
     meshdir.mkdir(parents=True, exist_ok=True)
 
+    parent_mesh_dir = _mesh_source_dir(parent)
+    child_mesh_dir = _mesh_source_dir(child)
+
     for name in parent_meshes:
         mesh: mujoco.MjsMesh = spec.mesh(name)
-        mesh.file = str(parent.resolved_meshdir / mesh.file)
+        mesh.file = str(_mesh_file_path(parent, mesh.file))
 
     for name in child_meshes:
         mesh: mujoco.MjsMesh = spec.mesh(name)
-        mesh.file = str(child.resolved_meshdir / mesh.file)
+        # After attach, mesh.file still refers to the child's original path.
+        mesh.file = str(_mesh_file_path(child, mesh.file))
 
     spec.compile()
     spec.to_file(str(tmp_xml_path))
 
     spec = mujoco.MjSpec.from_file(str(tmp_xml_path))
     resolved_meshdir = (Path(spec.modelfiledir) / spec.meshdir).resolve()
-    (resolved_meshdir / parent.spec.modelname).symlink_to(parent.resolved_meshdir)
-    (resolved_meshdir / child.spec.modelname).symlink_to(child.resolved_meshdir)
+    # Nested ``<modelname>/file.stl`` under meshdir is valid; symlink each
+    # asset's real mesh folder there (not necessarily ``resolved_meshdir``).
+    (resolved_meshdir / parent.spec.modelname).symlink_to(parent_mesh_dir)
+    (resolved_meshdir / child.spec.modelname).symlink_to(child_mesh_dir)
 
     for name in parent_meshes:
         mesh = spec.mesh(name)

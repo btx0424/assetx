@@ -77,13 +77,9 @@ def main() -> None:
     saved = robot.save(args.output)
     print(saved.xml_path)
 
-    import mujoco.viewer
+    from assetx import launch_preview
 
-    model = robot.spec.compile()
-    data = mujoco.MjData(model)
-    with mujoco.viewer.launch_passive(model, data) as viewer:
-        while True:
-            viewer.sync()
+    launch_preview(robot)
 
 
 if __name__ == "__main__":

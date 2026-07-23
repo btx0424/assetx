@@ -422,14 +422,21 @@ class AddSite(Transform):
         type: str = "sphere",
         rgba: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 1.0),
     ) -> None:
-        if type not in {"sphere", "capsule", "ellipsoid", "cylinder", "box"}:
+        type_map = {
+            "sphere": mujoco.mjtGeom.mjGEOM_SPHERE,
+            "capsule": mujoco.mjtGeom.mjGEOM_CAPSULE,
+            "ellipsoid": mujoco.mjtGeom.mjGEOM_ELLIPSOID,
+            "cylinder": mujoco.mjtGeom.mjGEOM_CYLINDER,
+            "box": mujoco.mjtGeom.mjGEOM_BOX,
+        }
+        if type not in type_map:
             raise ValueError(f"Invalid site type: {type}")
         self.body_path = body_path
         self.name = name
         self.pos = pos
         self.quat = quat
         self.size = size
-        self.type = type
+        self.type = type_map[type]
         self.rgba = rgba
 
     def transform(self, asset: MujocoAsset) -> MujocoAsset:
