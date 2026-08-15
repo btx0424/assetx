@@ -5,7 +5,9 @@ from assetx.core.preview import add_preview_light, compile_for_preview, launch_p
 from assetx.core.transforms import (
     AddJoint,
     AddSite,
+    ApproximateWithCapsule,
     Body2Site,
+    CapsuleFit,
     Compose,
     MergeBodies,
     MergeBodiesParentChild,
@@ -18,12 +20,15 @@ from assetx.core.transforms import (
     SelectSubtree,
     Transform,
     apply_transforms,
+    fit_capsule_pca,
 )
 
 __all__ = [
     "AddJoint",
     "AddSite",
+    "ApproximateWithCapsule",
     "Body2Site",
+    "CapsuleFit",
     "Compose",
     "JointCfg",
     "MergeBodies",
@@ -42,6 +47,7 @@ __all__ = [
     "assemble",
     "asset_builder",
     "compile_for_preview",
+    "fit_capsule_pca",
     "get_asset_builder",
     "launch_preview",
     "list_asset_builders",

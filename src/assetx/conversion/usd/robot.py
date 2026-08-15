@@ -223,28 +223,68 @@ def _axis_vector(axis_token: str | None) -> np.ndarray:
     return mapping.get(str(axis_token).upper(), mapping["Z"])
 
 
+def _finite_vec(value: object | None, *, size: int) -> np.ndarray | None:
+    if value is None:
+        return None
+    arr = np.asarray(value, dtype=np.float64).reshape(-1)
+    if arr.size != size or not np.all(np.isfinite(arr)):
+        return None
+    return arr
+
+
 def _set_body_inertial(mj_body: mujoco.MjsBody, usd_body: Usd.Prim) -> None:
+    """Set explicit inertial from MassAPI. Raises if mass/inertia are missing or invalid."""
+    mass: float | None = None
+    com: np.ndarray | None = None
+    diag: np.ndarray | None = None
+    axes_quat: np.ndarray | None = None
+    has_mass_api = usd_body.HasAPI(UsdPhysics.MassAPI)
+
+    if has_mass_api:
+        mass_api = UsdPhysics.MassAPI(usd_body)
+        raw_mass = mass_api.GetMassAttr().Get()
+        if raw_mass is not None and math.isfinite(float(raw_mass)) and float(raw_mass) > 0.0:
+            mass = float(raw_mass)
+        com = _finite_vec(mass_api.GetCenterOfMassAttr().Get(), size=3)
+        diag = _finite_vec(mass_api.GetDiagonalInertiaAttr().Get(), size=3)
+        if diag is not None and not np.all(diag > 0.0):
+            diag = None
+        axes = mass_api.GetPrincipalAxesAttr().Get()
+        if axes is not None:
+            axes_quat = gf_quat_to_wxyz(axes)
+            if not np.all(np.isfinite(axes_quat)):
+                axes_quat = None
+
+    if mass is None or diag is None:
+        missing = []
+        if mass is None:
+            missing.append("physics:mass (> 0)")
+        if diag is None:
+            missing.append("physics:diagonalInertia (positive)")
+        hint = ""
+        if has_mass_api:
+            density_attr = UsdPhysics.MassAPI(usd_body).GetDensityAttr()
+            raw_density = density_attr.Get() if density_attr else None
+            if (
+                raw_density is not None
+                and math.isfinite(float(raw_density))
+                and float(raw_density) > 0.0
+            ):
+                hint = (
+                    f" Body has physics:density={float(raw_density)} but density-only "
+                    "inertials are not supported; author explicit mass and diagonalInertia."
+                )
+        raise ValueError(
+            f"Body {usd_body.GetPath()} has no valid MassAPI inertial "
+            f"(missing {', '.join(missing)}).{hint}"
+        )
+
     mj_body.explicitinertial = True
-    if not usd_body.HasAPI(UsdPhysics.MassAPI):
-        mj_body.mass = 1e-3
-        mj_body.inertia = np.array([1e-6, 1e-6, 1e-6])
-        mj_body.ipos = np.zeros(3)
-        mj_body.iquat = np.array([1.0, 0.0, 0.0, 0.0])
-        return
-
-    mass_api = UsdPhysics.MassAPI(usd_body)
-    mass = mass_api.GetMassAttr().Get()
-    com = mass_api.GetCenterOfMassAttr().Get()
-    diag = mass_api.GetDiagonalInertiaAttr().Get()
-    axes = mass_api.GetPrincipalAxesAttr().Get()
-
-    mj_body.mass = float(mass) if mass is not None else 1e-3
-    mj_body.ipos = np.asarray(com, dtype=np.float64) if com is not None else np.zeros(3)
-    mj_body.inertia = (
-        np.asarray(diag, dtype=np.float64) if diag is not None else np.array([1e-6, 1e-6, 1e-6])
-    )
+    mj_body.mass = mass
+    mj_body.ipos = com if com is not None else np.zeros(3)
+    mj_body.inertia = diag
     mj_body.iquat = (
-        gf_quat_to_wxyz(axes) if axes is not None else np.array([1.0, 0.0, 0.0, 0.0])
+        axes_quat if axes_quat is not None else np.array([1.0, 0.0, 0.0, 0.0])
     )
 
 

@@ -23,18 +23,14 @@ classifiers = [
 dependencies = [
     "mujoco",
     "scipy",
+    "trimesh",
+    "viser",
+    "usd-core",
 ]
 
 [project.optional-dependencies]
 research = [
     "mujoco-warp",
-    "trimesh",
-    "viser",
-]
-usd = [
-    "trimesh",
-    "usd-core",
-    "mujoco-usd-converter",
 ]
 
 [tool.setuptools]
