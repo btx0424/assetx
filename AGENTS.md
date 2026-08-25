@@ -27,7 +27,7 @@ artifacts/              # generated models (gitignored)
 |--------|----------------|
 | `asset.py` | `MujocoAsset`, `JointCfg` |
 | `assemble.py` | `assemble(parent, child, …)` |
-| `transforms.py` | Unary `Transform` subclasses + `Compose` |
+| `transforms/` | Unary `Transform` package (`base`, `topology`, `edit`, `simplification`) |
 | `builders.py` | `@asset_builder` |
 | `preview.py` | `launch_preview` (lit viewer copy; not saved) |
 
@@ -50,7 +50,7 @@ Collision geom names from USD→MJCF: `{body}_collision` / `{body}_collision{N}`
 
 | Task | Location |
 |------|----------|
-| New MJCF transform | `core/transforms.py`; export from `core/__init__.py` and package `__init__.py` |
+| New MJCF transform | `core/transforms/` (`base` / `topology` / `edit` / `simplification`); re-export from `transforms/__init__.py`, `core/__init__.py`, and package `__init__.py` |
 | Assembly / asset I/O | `core/assemble.py` / `core/asset.py` |
 | Recipe example | `examples/` |
 | USD geom logic | `conversion/usd/geoms.py` |

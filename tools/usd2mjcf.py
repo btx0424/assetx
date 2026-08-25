@@ -7,6 +7,7 @@ from pathlib import Path
 
 from assetx import launch_preview
 from assetx.conversion.usd import convert_usd_to_mjcf
+import mujoco
 
 
 def main() -> None:
@@ -44,6 +45,7 @@ def main() -> None:
     if args.no_viewer:
         return
 
+    spec = mujoco.MjSpec.from_file(str(xml_path))
     launch_preview(spec)
 
 

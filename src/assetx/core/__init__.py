@@ -3,8 +3,10 @@ from assetx.core.assemble import assemble
 from assetx.core.builders import asset_builder, get_asset_builder, list_asset_builders
 from assetx.core.preview import add_preview_light, compile_for_preview, launch_preview
 from assetx.core.transforms import (
+    AABBFit,
     AddJoint,
     AddSite,
+    ApproximateWithAABB,
     ApproximateWithCapsule,
     Body2Site,
     CapsuleFit,
@@ -12,6 +14,7 @@ from assetx.core.transforms import (
     MergeBodies,
     MergeBodiesParentChild,
     MergeSubtree,
+    NormalizeGeomNames,
     RemoveGeoms,
     RemoveJoints,
     RemoveSubtrees,
@@ -20,12 +23,15 @@ from assetx.core.transforms import (
     SelectSubtree,
     Transform,
     apply_transforms,
+    fit_aabb,
     fit_capsule_pca,
 )
 
 __all__ = [
+    "AABBFit",
     "AddJoint",
     "AddSite",
+    "ApproximateWithAABB",
     "ApproximateWithCapsule",
     "Body2Site",
     "CapsuleFit",
@@ -35,6 +41,7 @@ __all__ = [
     "MergeBodiesParentChild",
     "MergeSubtree",
     "MujocoAsset",
+    "NormalizeGeomNames",
     "RemoveGeoms",
     "RemoveJoints",
     "RemoveSubtrees",
@@ -47,6 +54,7 @@ __all__ = [
     "assemble",
     "asset_builder",
     "compile_for_preview",
+    "fit_aabb",
     "fit_capsule_pca",
     "get_asset_builder",
     "launch_preview",

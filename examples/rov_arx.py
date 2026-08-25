@@ -7,8 +7,11 @@ from pathlib import Path
 from assetx import (
     MujocoAsset,
     Compose,
+    NormalizeGeomNames,
     RenameBodies,
     AddSite,
+    RemoveGeoms,
+    ApproximateWithAABB,
     assemble,
     asset_builder,
 )
@@ -47,6 +50,7 @@ def build_rov_arx(base: MujocoAsset, arm: MujocoAsset) -> MujocoAsset:
     )
     transform = Compose(
         [
+            NormalizeGeomNames(),
             RenameBodies(
                 {
                     "arm_link6": "gripper_base",
@@ -63,6 +67,15 @@ def build_rov_arx(base: MujocoAsset, arm: MujocoAsset) -> MujocoAsset:
                 type="sphere",
                 rgba=(1.0, 0.0, 0.0, 0.6),
             ),
+            RemoveGeoms(
+                [f"rotor_{i}_collision" for i in range(7)]
+            ),
+            # replace base_link collision geoms one AABB
+            ApproximateWithAABB(
+                [["base_link_collision0"]],
+                names=[["base_link_collision0"]],
+                replace=True,
+            )
         ]
     )
     return transform.transform(asset)

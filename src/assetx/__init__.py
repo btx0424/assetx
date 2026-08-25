@@ -1,8 +1,10 @@
 """Compose and transform MuJoCo (MJCF) robot models."""
 
 from assetx.core import (
+    AABBFit,
     AddJoint,
     AddSite,
+    ApproximateWithAABB,
     ApproximateWithCapsule,
     Body2Site,
     CapsuleFit,
@@ -12,6 +14,7 @@ from assetx.core import (
     MergeBodiesParentChild,
     MergeSubtree,
     MujocoAsset,
+    NormalizeGeomNames,
     RemoveGeoms,
     RemoveJoints,
     RemoveSubtrees,
@@ -24,6 +27,7 @@ from assetx.core import (
     assemble,
     asset_builder,
     compile_for_preview,
+    fit_aabb,
     fit_capsule_pca,
     get_asset_builder,
     launch_preview,
@@ -31,8 +35,10 @@ from assetx.core import (
 )
 
 __all__ = [
+    "AABBFit",
     "AddJoint",
     "AddSite",
+    "ApproximateWithAABB",
     "ApproximateWithCapsule",
     "Body2Site",
     "CapsuleFit",
@@ -42,6 +48,7 @@ __all__ = [
     "MergeBodiesParentChild",
     "MergeSubtree",
     "MujocoAsset",
+    "NormalizeGeomNames",
     "RemoveGeoms",
     "RemoveJoints",
     "RemoveSubtrees",
@@ -54,6 +61,7 @@ __all__ = [
     "assemble",
     "asset_builder",
     "compile_for_preview",
+    "fit_aabb",
     "fit_capsule_pca",
     "get_asset_builder",
     "launch_preview",
