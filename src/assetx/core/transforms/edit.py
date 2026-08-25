@@ -53,6 +53,15 @@ class AddJoint(Transform):
         return replace(asset, spec=spec)
 
 
+_MARKER_TYPE_MAP = {
+    "sphere": mujoco.mjtGeom.mjGEOM_SPHERE,
+    "capsule": mujoco.mjtGeom.mjGEOM_CAPSULE,
+    "ellipsoid": mujoco.mjtGeom.mjGEOM_ELLIPSOID,
+    "cylinder": mujoco.mjtGeom.mjGEOM_CYLINDER,
+    "box": mujoco.mjtGeom.mjGEOM_BOX,
+}
+
+
 class AddSite(Transform):
     """Add a site to the asset."""
 
@@ -67,21 +76,14 @@ class AddSite(Transform):
         type: str = "sphere",
         rgba: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 1.0),
     ) -> None:
-        type_map = {
-            "sphere": mujoco.mjtGeom.mjGEOM_SPHERE,
-            "capsule": mujoco.mjtGeom.mjGEOM_CAPSULE,
-            "ellipsoid": mujoco.mjtGeom.mjGEOM_ELLIPSOID,
-            "cylinder": mujoco.mjtGeom.mjGEOM_CYLINDER,
-            "box": mujoco.mjtGeom.mjGEOM_BOX,
-        }
-        if type not in type_map:
+        if type not in _MARKER_TYPE_MAP:
             raise ValueError(f"Invalid site type: {type}")
         self.body_path = body_path
         self.name = name
         self.pos = pos
         self.quat = quat
         self.size = size
-        self.type = type_map[type]
+        self.type = _MARKER_TYPE_MAP[type]
         self.rgba = rgba
 
     def transform(self, asset: MujocoAsset) -> MujocoAsset:
@@ -97,6 +99,90 @@ class AddSite(Transform):
         site.size = self.size
         site.type = self.type
         site.rgba = self.rgba
+        spec.compile()
+        return replace(asset, spec=spec)
+
+
+class AddDummyBody(Transform):
+    """Add a fixed, zero-mass child body under ``parent_path``.
+
+    Prefer this over :class:`AddSite` when a named link is required by
+    downstream pipelines (e.g. Isaac / USD), which often drop MJCF sites.
+
+    By default attaches a visual-only marker geom (``contype=0``,
+    ``conaffinity=0``) for preview, matching gripper grasp-point recipes.
+
+    Example
+    -------
+    ::
+
+        AddDummyBody(
+            parent_path="gripper_base",
+            name="grasp_point",
+            pos=(0.05, 0.0, 0.0),
+        )
+    """
+
+    def __init__(
+        self,
+        parent_path: str,
+        name: str,
+        *,
+        pos: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        quat: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0),
+        marker: bool = True,
+        marker_size: float | tuple[float, float, float] = 0.01,
+        marker_type: str = "sphere",
+        rgba: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.6),
+        geom_name: str | None = None,
+    ) -> None:
+        if marker_type not in _MARKER_TYPE_MAP:
+            raise ValueError(f"Invalid marker type: {marker_type}")
+        if isinstance(marker_size, (int, float)):
+            size = (float(marker_size), float(marker_size), float(marker_size))
+        else:
+            size = tuple(float(x) for x in marker_size)
+            if len(size) != 3:
+                raise ValueError("marker_size must be a float or a length-3 tuple")
+        self.parent_path = parent_path
+        self.name = name
+        self.pos = pos
+        self.quat = quat
+        self.marker = bool(marker)
+        self.marker_size = size
+        self.marker_type = _MARKER_TYPE_MAP[marker_type]
+        self.rgba = rgba
+        self.geom_name = geom_name
+
+    def transform(self, asset: MujocoAsset) -> MujocoAsset:
+        spec = asset.spec.copy()
+        parent = spec.body(self.parent_path)
+        if parent is None:
+            raise ValueError(f"AddDummyBody: body {self.parent_path!r} not found")
+        if spec.body(self.name) is not None:
+            raise ValueError(f"AddDummyBody: body {self.name!r} already exists")
+
+        child = parent.add_body()
+        child.name = self.name
+        child.pos = self.pos
+        child.quat = self.quat
+        child.mass = 0.0
+        child.ipos = (0.0, 0.0, 0.0)
+        child.inertia = (0.0, 0.0, 0.0)
+        child.iquat = (1.0, 0.0, 0.0, 0.0)
+        child.explicitinertial = 1
+
+        if self.marker:
+            geom = child.add_geom()
+            geom.name = self.geom_name if self.geom_name is not None else f"{self.name}_visual"
+            geom.type = self.marker_type
+            geom.size = self.marker_size
+            geom.rgba = self.rgba
+            geom.contype = 0
+            geom.conaffinity = 0
+            geom.group = 1
+            geom.density = 0
+
         spec.compile()
         return replace(asset, spec=spec)
 

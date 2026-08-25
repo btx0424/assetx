@@ -7,3 +7,4 @@ __pycache__/
 assembled/
 artifacts/
 src/assetx/tmp/
+MUJOCO_LOG.TXT

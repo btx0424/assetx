@@ -4,6 +4,7 @@ from assetx.core.builders import asset_builder, get_asset_builder, list_asset_bu
 from assetx.core.preview import add_preview_light, compile_for_preview, launch_preview
 from assetx.core.transforms import (
     AABBFit,
+    AddDummyBody,
     AddJoint,
     AddSite,
     ApproximateWithAABB,
@@ -29,6 +30,7 @@ from assetx.core.transforms import (
 
 __all__ = [
     "AABBFit",
+    "AddDummyBody",
     "AddJoint",
     "AddSite",
     "ApproximateWithAABB",

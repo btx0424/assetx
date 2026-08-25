@@ -2,6 +2,7 @@
 
 from assetx.core import (
     AABBFit,
+    AddDummyBody,
     AddJoint,
     AddSite,
     ApproximateWithAABB,
@@ -33,9 +34,16 @@ from assetx.core import (
     launch_preview,
     list_asset_builders,
 )
+from assetx.fetch import (
+    GitHubDirRef,
+    download_github_dir,
+    find_mjcf,
+    parse_github_dir_url,
+)
 
 __all__ = [
     "AABBFit",
+    "AddDummyBody",
     "AddJoint",
     "AddSite",
     "ApproximateWithAABB",
@@ -43,6 +51,7 @@ __all__ = [
     "Body2Site",
     "CapsuleFit",
     "Compose",
+    "GitHubDirRef",
     "JointCfg",
     "MergeBodies",
     "MergeBodiesParentChild",
@@ -61,9 +70,12 @@ __all__ = [
     "assemble",
     "asset_builder",
     "compile_for_preview",
+    "download_github_dir",
+    "find_mjcf",
     "fit_aabb",
     "fit_capsule_pca",
     "get_asset_builder",
     "launch_preview",
     "list_asset_builders",
+    "parse_github_dir_url",
 ]

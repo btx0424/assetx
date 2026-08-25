@@ -30,6 +30,7 @@ artifacts/              # generated models (gitignored)
 | `transforms/` | Unary `Transform` package (`base`, `topology`, `edit`, `simplification`) |
 | `builders.py` | `@asset_builder` |
 | `preview.py` | `launch_preview` (lit viewer copy; not saved) |
+| `fetch.py` | Download a GitHub subdirectory into `artifacts/` (no full clone) |
 
 Import from `assetx` or `assetx.core`.
 

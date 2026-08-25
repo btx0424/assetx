@@ -1,5 +1,6 @@
 from assetx.core.transforms.base import Compose, Transform, apply_transforms
 from assetx.core.transforms.edit import (
+    AddDummyBody,
     AddJoint,
     AddSite,
     NormalizeGeomNames,
@@ -27,6 +28,7 @@ from assetx.core.transforms.topology import (
 
 __all__ = [
     "AABBFit",
+    "AddDummyBody",
     "AddJoint",
     "AddSite",
     "ApproximateWithAABB",
