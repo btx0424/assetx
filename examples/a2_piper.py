@@ -74,7 +74,8 @@ def build_a2_piper(base: MujocoAsset, arm: MujocoAsset) -> MujocoAsset:
             AddDummyBody(
                 parent_path="gripper_base",
                 name="grasp_point",
-                pos=(0.05, 0.0, 0.0),
+                pos=(0.1, 0.0, 0.0),
+                align_to="world",
                 marker_size=0.01,
                 rgba=(1.0, 0.0, 0.0, 0.6),
             ),

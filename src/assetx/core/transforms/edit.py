@@ -4,8 +4,11 @@ import re
 from dataclasses import replace
 
 import mujoco
+import numpy as np
+from scipy.spatial.transform import Rotation as sRot
 
 from assetx.core.asset import JointCfg, MujocoAsset
+from assetx.core.transforms._geom import compile_asset_spec
 from assetx.core.transforms.base import Transform
 
 
@@ -172,6 +175,11 @@ class AddDummyBody(Transform):
     By default attaches a visual-only marker geom (``contype=0``,
     ``conaffinity=0``) for preview, matching gripper grasp-point recipes.
 
+    ``align_to`` sets both pose semantics at qpos0 (``"world"`` or a body
+    name): local axes match the reference, and ``pos`` is an offset from
+    the parent origin expressed in that reference frame. Pass
+    ``align_to=None`` to keep ``pos`` / ``quat`` parent-relative.
+
     Example
     -------
     ::
@@ -179,7 +187,8 @@ class AddDummyBody(Transform):
         AddDummyBody(
             parent_path="gripper_base",
             name="grasp_point",
-            pos=(0.05, 0.0, 0.0),
+            pos=(0.05, 0.0, 0.0),  # 5 cm along world +X
+            align_to="world",
         )
     """
 
@@ -190,6 +199,7 @@ class AddDummyBody(Transform):
         *,
         pos: tuple[float, float, float] = (0.0, 0.0, 0.0),
         quat: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0),
+        align_to: str | None = "world",
         marker: bool = True,
         marker_size: float | tuple[float, float, float] = 0.01,
         marker_type: str = "sphere",
@@ -208,11 +218,51 @@ class AddDummyBody(Transform):
         self.name = name
         self.pos = pos
         self.quat = quat
+        self.align_to = align_to
         self.marker = bool(marker)
         self.marker_size = size
         self.marker_type = _MARKER_TYPE_MAP[marker_type]
         self.rgba = rgba
         self.geom_name = geom_name
+
+    def _aligned_pose(
+        self, asset: MujocoAsset, spec: mujoco.MjSpec
+    ) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
+        """Parent-frame (pos, quat) matching ``align_to`` at qpos0."""
+        model = compile_asset_spec(asset, spec)
+        data = mujoco.MjData(model)
+        mujoco.mj_forward(model, data)
+
+        parent_id = mujoco.mj_name2id(
+            model, mujoco.mjtObj.mjOBJ_BODY, self.parent_path
+        )
+        if parent_id < 0:
+            raise ValueError(
+                f"AddDummyBody: compiled model missing body {self.parent_path!r}"
+            )
+        parent_xmat = np.asarray(data.xmat[parent_id], dtype=float).reshape(3, 3)
+
+        if self.align_to == "world":
+            ref_xmat = np.eye(3, dtype=float)
+        else:
+            assert self.align_to is not None
+            ref_id = mujoco.mj_name2id(
+                model, mujoco.mjtObj.mjOBJ_BODY, self.align_to
+            )
+            if ref_id < 0:
+                raise ValueError(
+                    f"AddDummyBody: align_to body {self.align_to!r} not found"
+                )
+            ref_xmat = np.asarray(data.xmat[ref_id], dtype=float).reshape(3, 3)
+
+        # Offset in ref axes -> parent local: p_parent = R_parent.T @ R_ref @ p_ref
+        pos_ref = np.asarray(self.pos, dtype=float)
+        pos_parent = parent_xmat.T @ (ref_xmat @ pos_ref)
+
+        # R_parent @ R_local = R_ref  =>  R_local = R_parent.T @ R_ref
+        r_local = sRot.from_matrix(parent_xmat.T @ ref_xmat)
+        quat_parent = tuple(float(x) for x in r_local.as_quat(scalar_first=True))
+        return tuple(float(x) for x in pos_parent), quat_parent
 
     def transform(self, asset: MujocoAsset) -> MujocoAsset:
         spec = asset.spec.copy()
@@ -222,10 +272,15 @@ class AddDummyBody(Transform):
         if spec.body(self.name) is not None:
             raise ValueError(f"AddDummyBody: body {self.name!r} already exists")
 
+        if self.align_to is not None:
+            child_pos, child_quat = self._aligned_pose(asset, spec)
+        else:
+            child_pos, child_quat = self.pos, self.quat
+
         child = parent.add_body()
         child.name = self.name
-        child.pos = self.pos
-        child.quat = self.quat
+        child.pos = child_pos
+        child.quat = child_quat
         child.mass = 0.0
         child.ipos = (0.0, 0.0, 0.0)
         child.inertia = (0.0, 0.0, 0.0)

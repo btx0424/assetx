@@ -69,11 +69,12 @@ def build_b2_kinova(base: MujocoAsset, arm: MujocoAsset) -> MujocoAsset:
                     "arm_bracelet_link": "ee_link",
                 }
             ),
-            # Matches menagerie pinch_site on bracelet_link.
+            # Menagerie pinch offset along world +Z at qpos0 (ee Z is flipped).
             AddDummyBody(
                 parent_path="ee_link",
                 name="grasp_point",
-                pos=(0.0, 0.0, -0.061525),
+                pos=(0.0, 0.0, 0.061525),
+                align_to="world",
                 marker_size=0.01,
                 rgba=(1.0, 0.0, 0.0, 0.6),
             ),
