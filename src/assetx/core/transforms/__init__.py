@@ -4,8 +4,10 @@ from assetx.core.transforms.edit import (
     AddJoint,
     AddSite,
     NormalizeGeomNames,
+    RemoveActuators,
     RemoveGeoms,
     RemoveJoints,
+    RemoveSensors,
     RenameBodies,
 )
 from assetx.core.transforms.simplification import (
@@ -40,8 +42,10 @@ __all__ = [
     "MergeBodiesParentChild",
     "MergeSubtree",
     "NormalizeGeomNames",
+    "RemoveActuators",
     "RemoveGeoms",
     "RemoveJoints",
+    "RemoveSensors",
     "RemoveSubtrees",
     "RenameBodies",
     "ReplaceCylinderWithCapsule",

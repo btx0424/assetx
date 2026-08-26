@@ -165,26 +165,3 @@ def download_github_dir(
         json.dumps(meta, indent=2) + "\n", encoding="utf-8"
     )
     return dest_path
-
-
-def find_mjcf(directory: str | Path, *, preferred_names: list[str] | None = None) -> Path:
-    """Pick an MJCF XML under ``directory`` (non-recursive preference, then recursive)."""
-    root = Path(directory)
-    candidates = preferred_names or []
-    for name in candidates:
-        path = root / name
-        if path.is_file():
-            return path
-    top_level = sorted(p for p in root.glob("*.xml") if p.is_file() and p.name != "scene.xml")
-    if len(top_level) == 1:
-        return top_level[0]
-    if top_level:
-        return top_level[0]
-    nested = sorted(
-        p
-        for p in root.rglob("*.xml")
-        if p.is_file() and p.name != "scene.xml" and p.name != ".assetx_fetch.json"
-    )
-    if not nested:
-        raise FileNotFoundError(f"No MJCF XML found under {root}")
-    return nested[0]

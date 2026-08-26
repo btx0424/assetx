@@ -11,7 +11,6 @@ from assetx import (
     RemoveActuators,
     RemoveSensors,
     RenameBodies,
-    ReplaceCylinderWithCapsule,
     assemble,
     asset_builder,
 )
@@ -20,61 +19,61 @@ from assetx.fetch import download_github_dir
 _ARTIFACTS = Path("artifacts")
 _VENDOR = _ARTIFACTS / "vendor"
 
-# Subdirectory-only fetches (no full-repo clone / no git history).
-A2_GITHUB = (
-    "https://github.com/unitreerobotics/unitree_ros/tree/master/robots/a2_description"
+B2_GITHUB = (
+    "https://github.com/unitreerobotics/unitree_ros/tree/master/robots/b2_description_mujoco"
 )
-A2_FILE = "a2.xml"
+B2_FILE = "xml/b2.xml"
 
-PIPER_GITHUB = (
-    "https://github.com/google-deepmind/mujoco_menagerie/tree/main/agilex_piper"
+KINOVA_GITHUB = (
+    "https://github.com/google-deepmind/mujoco_menagerie/tree/main/kinova_gen3"
 )
-PIPER_FILE = "piper.xml"
+KINOVA_FILE = "gen3.xml"
 
 
 @asset_builder
-def load_a2(xml_path: str | Path) -> MujocoAsset:
+def load_b2(xml_path: str | Path) -> MujocoAsset:
     asset = MujocoAsset.from_file(xml_path)
     # sensors and actuators should be added by downstream applications
     # do not hard-code in the xml
     transform = Compose([
-        RemoveSensors(names=[".*pos", ".*torque", "imu.*"]),
+        RemoveSensors(names=[".*pos", ".*vel", "imu.*"]),
         RemoveActuators(names=[".*"]),
     ])
     return transform.transform(asset)
 
+
 @asset_builder
-def load_piper(xml_path: str | Path) -> MujocoAsset:
+def load_kinova(xml_path: str | Path) -> MujocoAsset:
     asset = MujocoAsset.from_file(xml_path)
     transform = RemoveActuators(names=[".*"])
     return transform.transform(asset)
 
 
 @asset_builder
-def build_a2_piper(base: MujocoAsset, arm: MujocoAsset) -> MujocoAsset:
+def build_b2_kinova(base: MujocoAsset, arm: MujocoAsset) -> MujocoAsset:
+    """Mount Kinova Gen3 on B2 ``base_link``."""
     asset = assemble(
         parent=base,
         child=arm,
         parent_link="base_link",
         child_prefix="arm_",
-        translation=(0.05, 0.0, 0.10),
+        # Top of the B2 torso; tweak after visual inspection.
+        translation=(0.0, 0.0, 0.12),
         rotation=(0.0, 0.0, 0.0),
     )
     transform = Compose(
         [
             NormalizeGeomNames(),
-            ReplaceCylinderWithCapsule(),
             RenameBodies(
                 {
-                    "arm_link7": "gripper_right",
-                    "arm_link8": "gripper_left",
-                    "arm_link6": "gripper_base",
+                    "arm_bracelet_link": "ee_link",
                 }
             ),
+            # Matches menagerie pinch_site on bracelet_link.
             AddDummyBody(
-                parent_path="gripper_base",
+                parent_path="ee_link",
                 name="grasp_point",
-                pos=(0.05, 0.0, 0.0),
+                pos=(0.0, 0.0, -0.061525),
                 marker_size=0.01,
                 rgba=(1.0, 0.0, 0.0, 0.6),
             ),
@@ -116,21 +115,21 @@ def _resolve_mjcf(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Build an A2 + Piper MJCF asset. "
-            "If --a2/--piper are omitted, download vendor folders into artifacts/vendor/."
+            "Build a B2 + Kinova Gen3 MJCF asset. "
+            "If --b2/--kinova are omitted, download vendor folders into artifacts/vendor/."
         )
     )
     parser.add_argument(
-        "--a2",
+        "--b2",
         type=Path,
         default=None,
-        help="Local A2 MJCF file (default: download unitree a2_description).",
+        help="Local B2 MJCF file (default: download unitree b2_description_mujoco).",
     )
     parser.add_argument(
-        "--piper",
+        "--kinova",
         type=Path,
         default=None,
-        help="Local Piper MJCF file (default: download mujoco_menagerie agilex_piper).",
+        help="Local Kinova Gen3 MJCF file (default: download mujoco_menagerie kinova_gen3).",
     )
     parser.add_argument(
         "--force-download",
@@ -140,7 +139,7 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=Path,
-        default=_ARTIFACTS / "a2_piper",
+        default=_ARTIFACTS / "b2_kinova",
         help="Output directory for the assembled model.",
     )
     parser.add_argument(
@@ -150,24 +149,24 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    a2_xml = _resolve_mjcf(
-        args.a2,
-        github_url=A2_GITHUB,
-        vendor_dirname="a2_description",
-        relative_xml=A2_FILE,
+    b2_xml = _resolve_mjcf(
+        args.b2,
+        github_url=B2_GITHUB,
+        vendor_dirname="b2_description_mujoco",
+        relative_xml=B2_FILE,
         force_download=args.force_download,
     )
-    piper_xml = _resolve_mjcf(
-        args.piper,
-        github_url=PIPER_GITHUB,
-        vendor_dirname="agilex_piper",
-        relative_xml=PIPER_FILE,
+    kinova_xml = _resolve_mjcf(
+        args.kinova,
+        github_url=KINOVA_GITHUB,
+        vendor_dirname="kinova_gen3",
+        relative_xml=KINOVA_FILE,
         force_download=args.force_download,
     )
-    print(f"Using A2: {a2_xml}")
-    print(f"Using Piper: {piper_xml}")
+    print(f"Using B2: {b2_xml}")
+    print(f"Using Kinova: {kinova_xml}")
 
-    robot = build_a2_piper(load_a2(a2_xml), load_piper(piper_xml))
+    robot = build_b2_kinova(load_b2(b2_xml), load_kinova(kinova_xml))
     saved = robot.save(args.output)
     print(saved.xml_path)
 

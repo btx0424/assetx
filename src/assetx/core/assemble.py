@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 import mujoco
@@ -23,37 +22,6 @@ def _absolutize_mesh_files(asset: MujocoAsset, spec: mujoco.MjSpec) -> None:
             mesh.file = str(_mesh_file_path(asset, mesh.file))
 
 
-def _mesh_source_dir(asset: MujocoAsset, spec: mujoco.MjSpec | None = None) -> Path:
-    """Directory that actually contains ``asset``'s mesh files.
-
-    Prefer the common parent of absolute mesh paths (URDF→MJCF often leaves
-    ``meshdir`` empty while ``file`` is absolute). Fall back to
-    ``resolved_meshdir``.
-    """
-    use_spec = spec if spec is not None else asset.spec
-    parents: set[Path] = set()
-    for mesh in use_spec.meshes:
-        if not mesh.file:
-            continue
-        parents.add(_mesh_file_path(asset, mesh.file).parent)
-    if len(parents) == 1:
-        return parents.pop()
-    if not parents:
-        return asset.resolved_meshdir
-    raise ValueError(
-        f"Meshes for {asset.spec.modelname!r} span multiple directories: "
-        f"{sorted(str(p) for p in parents)}. Put them under one folder or set meshdir."
-    )
-
-
-def _is_relative_to(path: Path, parent: Path) -> bool:
-    try:
-        path.resolve().relative_to(parent.resolve())
-        return True
-    except ValueError:
-        return False
-
-
 def assemble(
     parent: MujocoAsset,
     child: MujocoAsset,
@@ -63,6 +31,13 @@ def assemble(
     rotation: tuple[float, float, float] = (0, 0, 0),
     joint_cfg: JointCfg | None = None,
 ) -> MujocoAsset:
+    """Attach ``child`` under ``parent_link`` and return an in-memory asset.
+
+    Mesh ``file`` attributes are left as **absolute** paths into the parent /
+    child source trees (no temp staging, no symlinks). Call
+    :meth:`MujocoAsset.save` to write a durable artifact with relative mesh
+    paths copied into the output directory.
+    """
     # Work on copies so caller assets stay unchanged. Absolutize mesh paths
     # *before* attach: MuJoCo may auto-name unnamed meshes on attach, so
     # reconstructing ``{prefix}{old_name}`` is unreliable.
@@ -70,10 +45,6 @@ def assemble(
     child_spec = child.spec.copy()
     _absolutize_mesh_files(parent, spec)
     _absolutize_mesh_files(child, child_spec)
-    parent_mesh_dir = _mesh_source_dir(parent, spec)
-    child_mesh_dir = _mesh_source_dir(child, child_spec)
-    parent_model = parent.spec.modelname or "parent"
-    child_model = child.spec.modelname or "child"
 
     child_root = child_spec.worldbody.first_body()
     frame = spec.body(parent_link).add_frame()
@@ -97,35 +68,20 @@ def assemble(
             if cfg.limited:
                 joint.range = cfg.range
 
-    # Own the temp dir for the lifetime of the returned asset (until GC after save).
-    tmp = tempfile.TemporaryDirectory(prefix="assetx-assemble-")
-    tmp_dir = Path(tmp.name)
-    tmp_xml_path = tmp_dir / "assembled.xml"
-    meshdir = tmp_dir / "meshes"
-    meshdir.mkdir(parents=True, exist_ok=True)
-
-    spec.compile()
-    spec.to_file(str(tmp_xml_path))
-
-    spec = mujoco.MjSpec.from_file(str(tmp_xml_path))
-    resolved_meshdir = (Path(spec.modelfiledir) / spec.meshdir).resolve()
-    # Nested ``<modelname>/file.stl`` under meshdir is valid; symlink each
-    # asset's real mesh folder there (not necessarily ``resolved_meshdir``).
-    (resolved_meshdir / parent_model).symlink_to(parent_mesh_dir)
-    (resolved_meshdir / child_model).symlink_to(child_mesh_dir)
-
+    # Ensure every mesh path is still absolute after attach.
     for mesh in spec.meshes:
         if not mesh.file:
             continue
-        src = Path(mesh.file)
-        if not src.is_absolute():
-            src = (Path(spec.modelfiledir) / src).resolve()
-        if _is_relative_to(src, parent_mesh_dir):
-            mesh.file = str(Path(parent_model) / src.name)
-        elif _is_relative_to(src, child_mesh_dir):
-            mesh.file = str(Path(child_model) / src.name)
+        path = Path(mesh.file)
+        if not path.is_absolute():
+            # Prefer parent meshdir, then child (attach should not rewrite these).
+            for base in (parent.resolved_meshdir, child.resolved_meshdir):
+                candidate = (base / path).resolve()
+                if candidate.is_file():
+                    mesh.file = str(candidate)
+                    break
 
     spec.compile()
-    final_xml_path = tmp_dir / "model.xml"
-    spec.to_file(str(final_xml_path))
-    return MujocoAsset(final_xml_path, spec, Path(spec.meshdir), _tmpdir=tmp)
+    # xml_path is provenance only; mesh files on the spec are absolute.
+    # meshdir="meshes" is the conventional relative layout used by save().
+    return MujocoAsset(parent.xml_path, spec, Path("meshes"))

@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 
 import mujoco
 
 from assetx.core.asset import JointCfg, MujocoAsset
 from assetx.core.transforms.base import Transform
+
+
+def _name_matches(name: str, patterns: list[str]) -> bool:
+    """Return True if ``name`` fully matches any regex in ``patterns``."""
+    if not name:
+        return False
+    return any(re.fullmatch(pat, name) is not None for pat in patterns)
 
 
 class RemoveJoints(Transform):
@@ -17,6 +25,58 @@ class RemoveJoints(Transform):
         for joint in list(spec.joints):
             if joint.name in self.joint_names:
                 spec.delete(joint)
+        spec.compile()
+        return replace(asset, spec=spec)
+
+
+class RemoveSensors(Transform):
+    """Delete sensors whose names match any of the given regex patterns.
+
+    Example
+    -------
+    ::
+
+        RemoveSensors(names=[".*pos", ".*torque", "imu.*"])
+    """
+
+    def __init__(self, names: list[str]) -> None:
+        self.names = list(names)
+
+    def transform(self, asset: MujocoAsset) -> MujocoAsset:
+        spec = asset.spec.copy()
+        for sensor in list(spec.sensors):
+            if _name_matches(sensor.name or "", self.names):
+                spec.delete(sensor)
+        spec.compile()
+        return replace(asset, spec=spec)
+
+
+class RemoveActuators(Transform):
+    """Delete actuators whose names match any of the given regex patterns.
+
+    Keyframe ``ctrl`` vectors are cleared when their length no longer matches
+    the remaining actuator count (common after stripping vendor actuators).
+
+    Example
+    -------
+    ::
+
+        RemoveActuators(names=[".*"])  # strip all actuators
+    """
+
+    def __init__(self, names: list[str]) -> None:
+        self.names = list(names)
+
+    def transform(self, asset: MujocoAsset) -> MujocoAsset:
+        spec = asset.spec.copy()
+        for actuator in list(spec.actuators):
+            if _name_matches(actuator.name or "", self.names):
+                spec.delete(actuator)
+        n_act = len(list(spec.actuators))
+        for key in list(spec.keys):
+            ctrl = getattr(key, "ctrl", None)
+            if ctrl is not None and len(ctrl) != n_act:
+                key.ctrl = []
         spec.compile()
         return replace(asset, spec=spec)
 

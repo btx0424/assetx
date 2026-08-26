@@ -112,8 +112,6 @@ def main() -> None:
     args = parser.parse_args()
 
     robot = build_rov_arx(load_rov(args.rov), load_arx(args.arx))
-    # Assemble stages meshes under a TemporaryDirectory; copy so the artifact
-    # outlives that temp tree (plain symlink would dangle after GC).
     saved = robot.save(args.output, copy_meshes=True)
     print(saved.xml_path)
 

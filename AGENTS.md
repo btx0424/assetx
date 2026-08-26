@@ -90,7 +90,7 @@ PYTHONPATH=src python tools/usd2mjcf.py -p /path/to/robot.usd --no-viewer
 - Pure imports: no viewer launch or file deletion at import time.
 - CLI viewers are opt-out via `--no-viewer` where interactive; use `assetx.launch_preview` (adds a temporary key light, never written to disk).
 - `MujocoAsset.from_file` requires exactly one body under `worldbody`.
-- `assemble()` keeps a `TemporaryDirectory` alive on the returned asset (`_tmpdir`) until the asset is GC'd; call `save()` to persist.
+- `assemble()` leaves mesh paths absolute into the parent/child source trees (no temp dir). Call `save()` to write a durable artifact with meshes copied under the output directory.
 
 ## Testing
 

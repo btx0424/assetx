@@ -1,96 +1,138 @@
 # assetx
 
-If you encounter issues when using IsaacSim, run
-
-```bash
-pip uninstall usd-core usd-exchange
-```
-
-```bash
-git clone --depth=1 --recursive --branch=develop https://github.com/isaac-sim/IsaacSim
-git sparse-checkout init --cone
-git sparse-checkout set source/extensions/isaacsim.asset.importer.mjcf
-```
-
 **Composable, reproducible robot descriptions from base assets and recipes.**
 
-## Introduction
+Assemble MJCF building blocks (base, arm, gripper), apply transforms, and export a
+deterministic robot model — instead of hand-editing monolithic XML copies.
 
-Robot descriptions today are often single, hand-edited files. Changing one robot or reusing a sub-assembly means copying XML, fixing paths, and hoping nothing breaks. Sharing a “variant” means sharing another full copy. Reproducibility is hard because the exact steps from sources to final model are unclear.
+## Motivation
 
-The goal of **assetx** is to turn this into a simple pipeline:
+Robot descriptions are often single, hand-edited files. Reusing a sub-assembly
+means copying XML, fixing mesh paths, and hoping nothing breaks. Sharing a
+variant usually means sharing another full copy, so provenance is unclear.
 
-1. **Base assets** — Canonical descriptions of building blocks (e.g. a mobile base, an arm, a gripper). Today these are MJCF models; the idea generalizes to other formats. Base assets are the single source of truth: versioned, shared, and not edited per-robot.
+**assetx** makes composition explicit:
 
-2. **Recipes** — A declarative or programmatic description of how to build a robot from those assets. A recipe does two things:
-   - **Assemble**: attach assets together (e.g. mount an arm on a base at a given link, with a given pose and joint type).
-   - **Transform**: apply structural edits to the combined model (merge bodies, replace geometry types, remove subtrees, rename bodies, etc.).
-   Recipes can be reused across different base assets: for example, a single “mount arm” recipe can be applied to different quadrupeds to produce multiple robot variants.
+1. **Base assets** — Canonical MJCF blocks (quadruped, arm, gripper). Versioned
+   sources of truth; not edited per-robot.
+2. **Recipes** — Python functions that **assemble** assets (mount child on
+   parent link + pose) and **transform** the result (rename bodies, strip
+   actuators/sensors, fit collision shapes, add grasp frames, …).
+3. **Final robot** — Fully determined by `base assets + recipe`. Same inputs
+   always yield the same output.
 
-3. **Final robot** — The output of the recipe is a complete robot description. Because it is fully determined by “these base assets + this recipe,” the same inputs always produce the same output. Reproducibility comes from specifying the pipeline, not from sharing a frozen file.
+That gives reproducibility, reuse across bases (e.g. one “mount arm” recipe on
+different quadrupeds), and clear provenance.
 
-By making composition explicit (assemble + transform), we get:
+## Installation
 
-- **Reproducibility**: Same base assets and recipe → same robot. No hidden manual edits.
-- **Easier composition**: Reuse and combine base assets instead of copying and patching monolithic URDF/MJCF.
-- **Recipe reuse**: The same recipe can be applied to different base assets (e.g. a “mount arm” recipe on different quadrupeds) to get many robot variants from one pipeline.
-- **Clear provenance**: The final model is traceable back to specific assets and recipe steps.
+Requires Python ≥ 3.10 and a working MuJoCo install.
 
-The current implementation is a step toward this vision: it already supports assembling MJCF assets and a set of transforms, but the pipeline, recipe format, and asset lifecycle are still evolving. This README describes the direction we want to reach.
+```bash
+cd aa-projects/assetx
+pip install -e .
+```
 
-## Current Structure
+Core dependencies (from `pyproject.toml`): `mujoco`, `scipy`, `trimesh`, `viser`,
+`usd-core`.
 
-- `assetx` / `assetx.core` — MJCF assemble, transforms, builders
-- `assetx.conversion` — MJCF↔URDF and USD→MJCF
-- `tools/` — thin CLIs; `tools/research/` for optional experiments
+Optional research extras:
 
-## Function-Based Builders
+```bash
+pip install -e ".[research]"   # adds mujoco-warp
+```
 
-Recipes are plain Python functions returning `MujocoAsset`. Builder registration is optional and can be added with a decorator.
+## Quick start
+
+Recipes are plain Python functions returning `MujocoAsset`. Use `@asset_builder`
+only if you want optional registration.
 
 ```python
 from assetx import (
+    Compose,
     MujocoAsset,
+    NormalizeGeomNames,
     RenameBodies,
     ReplaceCylinderWithCapsule,
-    apply_transforms,
     assemble,
     asset_builder,
 )
 
+@asset_builder
+def load_base(path) -> MujocoAsset:
+    return MujocoAsset.from_file(path)
 
 @asset_builder
-def load_base() -> MujocoAsset:
-    return MujocoAsset.from_file("assets/a2/model.xml")
-
-
-@asset_builder
-def load_arm() -> MujocoAsset:
-    return MujocoAsset.from_file("assets/piper/model.xml")
-
+def load_arm(path) -> MujocoAsset:
+    return MujocoAsset.from_file(path)
 
 @asset_builder
-def build_a2_with_piper(
-    base: MujocoAsset,
-    arm: MujocoAsset,
-) -> MujocoAsset:
+def build_robot(base: MujocoAsset, arm: MujocoAsset) -> MujocoAsset:
     robot = assemble(
         parent=base,
         child=arm,
         parent_link="base_link",
         child_prefix="arm_",
+        translation=(0.05, 0.0, 0.10),
     )
-    return apply_transforms(
-        robot,
-        RenameBodies({"arm_link7": "gripper_left", "arm_link8": "gripper_right"}),
+    return Compose([
+        NormalizeGeomNames(),
         ReplaceCylinderWithCapsule(),
-    )
+        RenameBodies({"arm_link6": "gripper_base"}),
+    ]).transform(robot)
 ```
 
-This keeps the recipe API simple:
+- **Transforms** are unary (`asset → asset`).
+- **Assembly** is multi-input (`parent + child → asset`).
+- Recipes are normal call graphs that IDEs can navigate.
 
-- transforms stay unary
-- assembly stays multi-input
-- recipes are normal Python call graphs that IDEs can navigate
+## Examples
 
-See [examples/a2_piper.py](/home/btx0424/lab51/aa-projects/assetx/examples/a2_piper.py) for a concrete builder-based example that assembles an A2 base with a Piper arm.
+Run from the `assetx` package root (or any cwd; examples write under
+`artifacts/`). Vendor MJCF is fetched automatically into `artifacts/vendor/`
+when local paths are omitted.
+
+| Example | What it builds | Command |
+|--------|----------------|---------|
+| [`examples/a2_piper.py`](examples/a2_piper.py) | Unitree A2 + AgileX Piper | `python examples/a2_piper.py` |
+| [`examples/b2_kinova.py`](examples/b2_kinova.py) | Unitree B2 + Kinova Gen3 | `python examples/b2_kinova.py` |
+| [`examples/b2z1.py`](examples/b2z1.py) | B2-Z1 cleanup / merge recipe | `python examples/b2z1.py --help` |
+| [`examples/rov_arx.py`](examples/rov_arx.py) | BlueROV + ARX X5A (lab paths) | `python examples/rov_arx.py --help` |
+| [`examples/g1_inspire_hand.py`](examples/g1_inspire_hand.py) | G1 Inspire finger capsule approx. | `python examples/g1_inspire_hand.py --help` |
+
+Typical flags (A2 + Piper):
+
+```bash
+python examples/a2_piper.py                  # fetch vendor MJCF if needed, preview
+python examples/a2_piper.py --no-viewer      # export only → artifacts/a2_piper/
+python examples/a2_piper.py --force-download # refresh artifacts/vendor/
+python examples/a2_piper.py --a2 /path/to/a2.xml --piper /path/to/piper.xml
+```
+
+Outputs land in `artifacts/<name>/` (e.g. `model.xml`, `model.urdf`, meshes).
+
+A common recipe pattern: strip vendor sensors/actuators on load (downstream
+apps add their own), then assemble and rename EE links / add a `grasp_point`:
+
+```python
+from assetx import Compose, RemoveActuators, RemoveSensors
+
+Compose([
+    RemoveSensors(names=[".*pos", ".*torque", "imu.*"]),
+    RemoveActuators(names=[".*"]),
+]).transform(MujocoAsset.from_file("a2.xml"))
+```
+
+## Package layout
+
+| Path | Role |
+|------|------|
+| `assetx` / `assetx.core` | MJCF assemble, transforms, builders, preview |
+| `assetx.conversion` | MJCF ↔ URDF, USD helpers |
+| `assetx.fetch` | Sparse GitHub directory download for vendor MJCF |
+| `examples/` | End-to-end recipes |
+| `artifacts/` | Generated robots + cached vendor trees (local) |
+
+## License
+
+MIT — see `pyproject.toml`.

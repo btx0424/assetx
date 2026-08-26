@@ -27,7 +27,7 @@ class MujocoAsset:
     xml_path: Path
     spec: mujoco.MjSpec
     meshdir: Path
-    # Keeps TemporaryDirectory (or similar) alive while this asset references tmp files.
+    # Optional lifetime hook (kept for API compat; assemble no longer uses temp).
     _tmpdir: Any = field(default=None, repr=False, compare=False, hash=False)
 
     @property
@@ -49,19 +49,72 @@ class MujocoAsset:
         root_body = spec.worldbody.first_body()
         root_body.pos = (0, 0, 0)
         root_body.quat = (1, 0, 0, 0)
-        meshdir = Path(spec.meshdir)
+        meshdir = Path(spec.meshdir) if spec.meshdir else Path(".")
         resolved_meshdir = (path.parent / meshdir).resolve()
         if not resolved_meshdir.exists():
             raise FileNotFoundError(f"Meshdir {resolved_meshdir} not found")
         return MujocoAsset(path, spec, meshdir)
 
+    def _resolve_mesh_source(self, mesh_file: str) -> Path:
+        path = Path(mesh_file)
+        if path.is_absolute():
+            return path.resolve()
+        for base in (self.resolved_meshdir, self.model_dir):
+            candidate = (base / path).resolve()
+            if candidate.is_file():
+                return candidate
+        return (self.resolved_meshdir / path).resolve()
+
+    @staticmethod
+    def _rewrite_mesh_files_relative(xml_path: Path, meshdir: Path) -> None:
+        """Rewrite absolute ``file=`` attrs under ``meshdir`` to meshdir-relative paths.
+
+        MuJoCo ``MjSpec.to_file`` emits absolute mesh paths from the compiled model.
+        Artifacts should stay portable with ``meshdir="meshes"`` + relative files.
+        """
+        text = xml_path.read_text(encoding="utf-8")
+        prefix = str(meshdir.resolve())
+        for needle in (prefix + "/", prefix + "\\"):
+            text = text.replace(f'file="{needle}', 'file="')
+        xml_path.write_text(text, encoding="utf-8")
+
+    @staticmethod
+    def _ensure_explicit_sphere_types(xml_path: Path) -> None:
+        """Re-insert ``type="sphere"`` omitted by MuJoCo ``to_file``.
+
+        XML's default geom type is sphere, so MuJoCo drops ``type="sphere"``.
+        On reload, a model-level ``<default><geom type="mesh"/></default>`` then
+        incorrectly makes those geoms meshes.
+        """
+        import re
+
+        def _repl(match: re.Match[str]) -> str:
+            tag = match.group(0)
+            if re.search(r"\stype=", tag) or re.search(r"\smesh=", tag):
+                return tag
+            if tag.endswith("/>"):
+                return tag[:-2] + ' type="sphere"/>'
+            return tag
+
+        text = xml_path.read_text(encoding="utf-8")
+        xml_path.write_text(
+            re.sub(r"<geom\b[^>]*/>", _repl, text),
+            encoding="utf-8",
+        )
     def save(
         self,
         path: str | Path,
         *,
-        copy_meshes: bool = False,
+        copy_meshes: bool = True,
         save_urdf: bool = True,
     ) -> "MujocoAsset":
+        """Write ``model.xml`` (and meshes) under ``path``.
+
+        Every mesh referenced by the spec is materialized under
+        ``path/meshes/{source_dir_name}/{filename}`` with **relative** ``file``
+        attributes on disk. Set ``copy_meshes=False`` to symlink each source
+        file instead of copying.
+        """
         root = Path(path)
         if root.exists() and root.is_file():
             raise ValueError(
@@ -69,62 +122,86 @@ class MujocoAsset:
                 "Pass the output directory where model.xml and meshes will be written."
             )
         root.mkdir(parents=True, exist_ok=True)
+
+        dest_meshdir = root / "meshes"
+        dest_meshdir.mkdir(parents=True, exist_ok=True)
+
+        used_relpaths: set[str] = set()
+        for mesh in self.spec.meshes:
+            if not mesh.file:
+                continue
+            src = self._resolve_mesh_source(mesh.file)
+            if not src.is_file():
+                raise FileNotFoundError(
+                    f"Mesh file not found: {src} (from {mesh.file!r})"
+                )
+
+            # Prefer a stable vendor/package folder name over generic "meshes"/"assets".
+            parent_name = src.parent.name or "mesh"
+            if parent_name.lower() in {"meshes", "assets", "mesh", "xml", "urdf"}:
+                parent_name = src.parent.parent.name or parent_name
+            rel = Path(parent_name) / src.name
+            rel_key = str(rel).replace("\\", "/")
+            if rel_key in used_relpaths:
+                existing = dest_meshdir / rel
+                if existing.exists() and existing.resolve() == src.resolve():
+                    # Point compile at the materialized file (absolute).
+                    mesh.file = str(existing.resolve())
+                    continue
+                stem, suffix = src.stem, src.suffix
+                index = 1
+                while True:
+                    rel = Path(parent_name) / f"{stem}_{index}{suffix}"
+                    rel_key = str(rel).replace("\\", "/")
+                    if rel_key not in used_relpaths:
+                        break
+                    index += 1
+            used_relpaths.add(rel_key)
+
+            dest = dest_meshdir / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if dest.exists() or dest.is_symlink():
+                if dest.is_dir() and not dest.is_symlink():
+                    shutil.rmtree(dest)
+                else:
+                    dest.unlink()
+            if copy_meshes:
+                shutil.copy2(src, dest)
+            else:
+                dest.symlink_to(src)
+
+            # Absolute into the output tree so compile/to_file succeed without chdir.
+            mesh.file = str(dest.resolve())
+
+        self.spec.meshdir = "meshes"
+        # to_file requires a compiled model and writes absolute mesh paths.
+        self.spec.compile()
         requested_xml = root / "model.xml"
         self.spec.to_file(str(requested_xml))
 
-        # MuJoCo may ignore requested filename and emit <model_name>.xml.
         if requested_xml.exists():
             output_xml = requested_xml
         else:
-            xml_candidates = sorted(root.glob("*.xml"), key=lambda p: p.stat().st_mtime, reverse=True)
+            xml_candidates = sorted(
+                root.glob("*.xml"), key=lambda p: p.stat().st_mtime, reverse=True
+            )
             if not xml_candidates:
-                raise FileNotFoundError(f"No XML file written to output directory {root}")
+                raise FileNotFoundError(
+                    f"No XML file written to output directory {root}"
+                )
             output_xml = xml_candidates[0]
 
-        # Copy or link meshdir as-is (keep original meshdir semantics).
-        dest_meshdir = root / self.spec.meshdir
-        dest_meshdir.parent.mkdir(parents=True, exist_ok=True)
-        source_meshdir = self.resolved_meshdir
-        if not source_meshdir.exists():
-            raise FileNotFoundError(f"Meshdir {source_meshdir} not found")
-
-        if dest_meshdir.resolve() == root.resolve():
-            # meshdir="." points to the output root; mirror directory contents.
-            for entry in source_meshdir.iterdir():
-                if entry.suffix.lower() == ".xml":
-                    continue
-                target = root / entry.name
-                if target.exists() or target.is_symlink():
-                    if target.is_dir() and not target.is_symlink():
-                        shutil.rmtree(target)
-                    else:
-                        target.unlink()
-                if entry.is_dir():
-                    if copy_meshes:
-                        shutil.copytree(entry, target)
-                    else:
-                        target.symlink_to(entry, target_is_directory=True)
-                else:
-                    if copy_meshes:
-                        shutil.copy2(entry, target)
-                    else:
-                        target.symlink_to(entry)
-        else:
-            if dest_meshdir.exists() or dest_meshdir.is_symlink():
-                if dest_meshdir.is_dir() and not dest_meshdir.is_symlink():
-                    shutil.rmtree(dest_meshdir)
-                else:
-                    dest_meshdir.unlink()
-            if copy_meshes:
-                shutil.copytree(source_meshdir, dest_meshdir)
-            else:
-                dest_meshdir.symlink_to(source_meshdir, target_is_directory=True)
+        self._rewrite_mesh_files_relative(output_xml, dest_meshdir)
+        self._ensure_explicit_sphere_types(output_xml)
 
         if save_urdf:
+            # Reload relative XML so the URDF also gets portable mesh paths.
+            rel_spec = mujoco.MjSpec.from_file(str(output_xml))
             write_urdf(
-                self.spec,
+                rel_spec,
                 output_xml.with_suffix(".urdf"),
-                robot_name=self.spec.modelname or output_xml.stem,
-                meshdir=str(self.spec.meshdir),
+                robot_name=rel_spec.modelname or output_xml.stem,
+                meshdir="meshes",
             )
-        return MujocoAsset(output_xml.resolve(), self.spec, Path(str(self.spec.meshdir)))
+
+        return MujocoAsset.from_file(output_xml)

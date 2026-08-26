@@ -16,8 +16,10 @@ from assetx.core import (
     MergeSubtree,
     MujocoAsset,
     NormalizeGeomNames,
+    RemoveActuators,
     RemoveGeoms,
     RemoveJoints,
+    RemoveSensors,
     RemoveSubtrees,
     RenameBodies,
     ReplaceCylinderWithCapsule,
@@ -37,7 +39,6 @@ from assetx.core import (
 from assetx.fetch import (
     GitHubDirRef,
     download_github_dir,
-    find_mjcf,
     parse_github_dir_url,
 )
 
@@ -58,8 +59,10 @@ __all__ = [
     "MergeSubtree",
     "MujocoAsset",
     "NormalizeGeomNames",
+    "RemoveActuators",
     "RemoveGeoms",
     "RemoveJoints",
+    "RemoveSensors",
     "RemoveSubtrees",
     "RenameBodies",
     "ReplaceCylinderWithCapsule",
@@ -71,7 +74,6 @@ __all__ = [
     "asset_builder",
     "compile_for_preview",
     "download_github_dir",
-    "find_mjcf",
     "fit_aabb",
     "fit_capsule_pca",
     "get_asset_builder",
