@@ -63,14 +63,17 @@ def _copy_geom_to_body(
     target_body: mujoco.MjsBody,
     pos: tuple[float, float, float],
     quat: tuple[float, float, float, float],
-) -> None:
+    *,
+    name: str | None = None,
+) -> mujoco.MjsGeom:
     new_geom = target_body.add_geom()
     new_geom.type = geom.type
     new_geom.size = geom.size
     new_geom.pos = pos
     new_geom.quat = quat
+    new_geom.fromto = geom.fromto
     new_geom.rgba = geom.rgba
-    new_geom.name = geom.name
+    new_geom.name = geom.name if name is None else name
     new_geom.contype = geom.contype
     new_geom.conaffinity = geom.conaffinity
     new_geom.mass = geom.mass
@@ -79,6 +82,39 @@ def _copy_geom_to_body(
     new_geom.meshname = geom.meshname
     new_geom.density = geom.density
     new_geom.group = geom.group
+    new_geom.priority = geom.priority
+    new_geom.margin = geom.margin
+    new_geom.gap = geom.gap
+    new_geom.solref = geom.solref
+    new_geom.solimp = geom.solimp
+    new_geom.classname = geom.classname
+    return new_geom
+
+
+def _geom_role(geom: mujoco.MjsGeom) -> str:
+    if int(geom.contype) == 0 and int(geom.conaffinity) == 0:
+        return "visual"
+    return "collision"
+
+
+def _assign_normalized_geom_names(
+    body: mujoco.MjsBody, used_names: set[str]
+) -> None:
+    """Rename body geoms with the :class:`NormalizeGeomNames` naming rule."""
+    next_indices: dict[str, int] = {}
+    body_name = body.name
+    if not body_name:
+        raise ValueError("cannot normalize geom names on an unnamed body")
+    for geom in body.geoms:
+        role = _geom_role(geom)
+        index = next_indices.get(role, 0)
+        candidate = f"{body_name}_{role}{index}"
+        while candidate in used_names:
+            index += 1
+            candidate = f"{body_name}_{role}{index}"
+        geom.name = candidate
+        used_names.add(candidate)
+        next_indices[role] = index + 1
 
 
 def _iter_subtree_bodies_with_pose_in_parent(
@@ -355,6 +391,130 @@ class SelectSubtree(Transform):
         spec.copy_during_attach = True
         frame = spec.worldbody.add_frame()
         frame.attach_body(subtree)
+        spec.compile()
+        return replace(asset, spec=spec)
+
+
+class GeomsToBody(Transform):
+    """Move geoms onto a new fixed child body and rename them.
+
+    All ``geom_names`` must currently share the same parent. The new body is
+    placed at the first geom's pose; each geom is re-expressed relative to that
+    frame (so a single foot sphere at ``pos=(0,0,-0.275)`` becomes a body at
+    that pose with the geom at the origin — matching aa-robot-models A2 feet).
+
+    Moved geoms are renamed with the same rule as :class:`NormalizeGeomNames`
+    (``{body}_visual{i}`` / ``{body}_collision{i}``).
+
+    Pass ``mass`` (and optionally ``inertia``) to give the new body an explicit
+    inertial — useful when moved geoms are visual-only / zero-density and a
+    massless body would break downstream simulators. When ``mass`` is set,
+    moved geoms have their density/mass cleared so the explicit inertial is
+    authoritative.
+
+    Example
+    -------
+    ::
+
+        GeomsToBody(["FL_calf_collision4"], "FL_foot", mass=0.05)
+    """
+
+    def __init__(
+        self,
+        geom_names: list[str],
+        body_name: str,
+        *,
+        mass: float | None = None,
+        inertia: tuple[float, float, float] | None = None,
+        ipos: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    ) -> None:
+        if not geom_names:
+            raise ValueError("GeomsToBody requires at least one geom name")
+        if not body_name:
+            raise ValueError("GeomsToBody requires a non-empty body_name")
+        if mass is not None and mass < 0:
+            raise ValueError(f"GeomsToBody: mass must be >= 0, got {mass}")
+        if inertia is not None:
+            if len(inertia) != 3:
+                raise ValueError("GeomsToBody: inertia must be a length-3 diaginertia")
+            if any(x < 0 for x in inertia):
+                raise ValueError(f"GeomsToBody: inertia components must be >= 0, got {inertia}")
+            if mass is None:
+                raise ValueError("GeomsToBody: inertia requires mass to be set")
+        self.geom_names = list(geom_names)
+        self.body_name = body_name
+        self.mass = mass
+        self.inertia = inertia
+        self.ipos = ipos
+
+    def transform(self, asset: MujocoAsset) -> MujocoAsset:
+        spec = asset.spec.copy()
+        if spec.body(self.body_name) is not None:
+            raise ValueError(f"GeomsToBody: body {self.body_name!r} already exists")
+
+        geoms: list[mujoco.MjsGeom] = []
+        for name in self.geom_names:
+            geom = spec.geom(name)
+            if geom is None:
+                raise ValueError(f"GeomsToBody: geom {name!r} not found")
+            geoms.append(geom)
+
+        parent = geoms[0].parent
+        if parent is None:
+            raise ValueError(
+                f"GeomsToBody: geom {self.geom_names[0]!r} has no parent body"
+            )
+        for geom, name in zip(geoms, self.geom_names):
+            if geom.parent is not parent:
+                raise ValueError(
+                    f"GeomsToBody: geom {name!r} parent {geom.parent.name!r} "
+                    f"differs from {parent.name!r}; all geoms must share a parent"
+                )
+
+        body_pos = np.asarray(geoms[0].pos, dtype=float)
+        body_rot = sRot.from_quat(geoms[0].quat, scalar_first=True)
+        child = parent.add_body()
+        child.name = self.body_name
+        child.pos = tuple(float(x) for x in body_pos)
+        child.quat = tuple(float(x) for x in body_rot.as_quat(scalar_first=True))
+
+        used_names = {g.name for g in spec.geoms if g.name}
+        # Reserve names that will be freed when source geoms are deleted.
+        for geom in geoms:
+            if geom.name:
+                used_names.discard(geom.name)
+
+        for geom in geoms:
+            geom_pos = np.asarray(geom.pos, dtype=float)
+            geom_rot = sRot.from_quat(geom.quat, scalar_first=True)
+            rel_pos = body_rot.inv().apply(geom_pos - body_pos)
+            rel_quat = body_rot.inv() * geom_rot
+            new_geom = _copy_geom_to_body(
+                geom,
+                child,
+                tuple(float(x) for x in rel_pos),
+                tuple(float(x) for x in rel_quat.as_quat(scalar_first=True)),
+                name="",
+            )
+            if self.mass is not None:
+                # Explicit body inertial owns the mass; keep geoms collision/visual only.
+                new_geom.density = 0
+                new_geom.mass = 0
+            spec.delete(geom)
+
+        if self.mass is not None:
+            diag = (
+                self.inertia
+                if self.inertia is not None
+                else (1e-6, 1e-6, 1e-6)
+            )
+            child.mass = float(self.mass)
+            child.ipos = tuple(float(x) for x in self.ipos)
+            child.inertia = tuple(float(x) for x in diag)
+            child.iquat = (1.0, 0.0, 0.0, 0.0)
+            child.explicitinertial = 1
+
+        _assign_normalized_geom_names(child, used_names)
         spec.compile()
         return replace(asset, spec=spec)
 

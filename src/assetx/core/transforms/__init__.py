@@ -21,6 +21,7 @@ from assetx.core.transforms.simplification import (
 )
 from assetx.core.transforms.topology import (
     Body2Site,
+    GeomsToBody,
     MergeBodies,
     MergeBodiesParentChild,
     MergeSubtree,
@@ -38,6 +39,7 @@ __all__ = [
     "Body2Site",
     "CapsuleFit",
     "Compose",
+    "GeomsToBody",
     "MergeBodies",
     "MergeBodiesParentChild",
     "MergeSubtree",

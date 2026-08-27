@@ -6,6 +6,7 @@ from pathlib import Path
 from assetx import (
     AddDummyBody,
     Compose,
+    GeomsToBody,
     MujocoAsset,
     NormalizeGeomNames,
     RemoveActuators,
@@ -79,6 +80,10 @@ def build_a2_piper(base: MujocoAsset, arm: MujocoAsset) -> MujocoAsset:
                 marker_size=0.01,
                 rgba=(1.0, 0.0, 0.0, 0.6),
             ),
+            GeomsToBody(["FL_calf_collision4", "FL_calf_visual1"], "FL_foot", mass=0.05),
+            GeomsToBody(["FR_calf_collision4", "FR_calf_visual1"], "FR_foot", mass=0.05),
+            GeomsToBody(["RL_calf_collision4", "RL_calf_visual1"], "RL_foot", mass=0.05),
+            GeomsToBody(["RR_calf_collision4", "RR_calf_visual1"], "RR_foot", mass=0.05),
         ]
     )
     return transform.transform(asset)

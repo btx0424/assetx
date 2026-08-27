@@ -6,6 +6,7 @@ from pathlib import Path
 from assetx import (
     AddDummyBody,
     Compose,
+    GeomsToBody,
     MujocoAsset,
     NormalizeGeomNames,
     RemoveActuators,
@@ -78,6 +79,10 @@ def build_b2_kinova(base: MujocoAsset, arm: MujocoAsset) -> MujocoAsset:
                 marker_size=0.01,
                 rgba=(1.0, 0.0, 0.0, 0.6),
             ),
+            GeomsToBody(["FL_calf_collision4"], "FL_foot", mass=0.05),
+            GeomsToBody(["FR_calf_collision4"], "FR_foot", mass=0.05),
+            GeomsToBody(["RL_calf_collision4"], "RL_foot", mass=0.05),
+            GeomsToBody(["RR_calf_collision4"], "RR_foot", mass=0.05),
         ]
     )
     return transform.transform(asset)

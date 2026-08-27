@@ -167,7 +167,7 @@ class AddSite(Transform):
 
 
 class AddDummyBody(Transform):
-    """Add a fixed, zero-mass child body under ``parent_path``.
+    """Add a fixed child body under ``parent_path``.
 
     Prefer this over :class:`AddSite` when a named link is required by
     downstream pipelines (e.g. Isaac / USD), which often drop MJCF sites.
@@ -180,6 +180,9 @@ class AddDummyBody(Transform):
     the parent origin expressed in that reference frame. Pass
     ``align_to=None`` to keep ``pos`` / ``quat`` parent-relative.
 
+    ``mass`` / ``inertia`` set an explicit inertial (default mass ``0``). Prefer
+    a small positive ``mass`` when zero-mass bodies cause issues in simulators.
+
     Example
     -------
     ::
@@ -189,6 +192,7 @@ class AddDummyBody(Transform):
             name="grasp_point",
             pos=(0.05, 0.0, 0.0),  # 5 cm along world +X
             align_to="world",
+            mass=1e-3,
         )
     """
 
@@ -200,6 +204,9 @@ class AddDummyBody(Transform):
         pos: tuple[float, float, float] = (0.0, 0.0, 0.0),
         quat: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0),
         align_to: str | None = "world",
+        mass: float = 0.0,
+        inertia: tuple[float, float, float] | None = None,
+        ipos: tuple[float, float, float] = (0.0, 0.0, 0.0),
         marker: bool = True,
         marker_size: float | tuple[float, float, float] = 0.01,
         marker_type: str = "sphere",
@@ -208,6 +215,15 @@ class AddDummyBody(Transform):
     ) -> None:
         if marker_type not in _MARKER_TYPE_MAP:
             raise ValueError(f"Invalid marker type: {marker_type}")
+        if mass < 0:
+            raise ValueError(f"AddDummyBody: mass must be >= 0, got {mass}")
+        if inertia is not None:
+            if len(inertia) != 3:
+                raise ValueError("AddDummyBody: inertia must be a length-3 diaginertia")
+            if any(x < 0 for x in inertia):
+                raise ValueError(
+                    f"AddDummyBody: inertia components must be >= 0, got {inertia}"
+                )
         if isinstance(marker_size, (int, float)):
             size = (float(marker_size), float(marker_size), float(marker_size))
         else:
@@ -219,6 +235,9 @@ class AddDummyBody(Transform):
         self.pos = pos
         self.quat = quat
         self.align_to = align_to
+        self.mass = float(mass)
+        self.inertia = inertia
+        self.ipos = ipos
         self.marker = bool(marker)
         self.marker_size = size
         self.marker_type = _MARKER_TYPE_MAP[marker_type]
@@ -281,9 +300,13 @@ class AddDummyBody(Transform):
         child.name = self.name
         child.pos = child_pos
         child.quat = child_quat
-        child.mass = 0.0
-        child.ipos = (0.0, 0.0, 0.0)
-        child.inertia = (0.0, 0.0, 0.0)
+        diag = self.inertia if self.inertia is not None else (1e-6, 1e-6, 1e-6)
+        # Zero mass keeps a zero diaginertia; positive mass needs a non-zero inertia.
+        if self.mass == 0.0 and self.inertia is None:
+            diag = (0.0, 0.0, 0.0)
+        child.mass = self.mass
+        child.ipos = tuple(float(x) for x in self.ipos)
+        child.inertia = tuple(float(x) for x in diag)
         child.iquat = (1.0, 0.0, 0.0, 0.0)
         child.explicitinertial = 1
 
