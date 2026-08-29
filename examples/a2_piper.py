@@ -6,6 +6,7 @@ from pathlib import Path
 from assetx import (
     AddDummyBody,
     Compose,
+    EditBodies,
     GeomsToBody,
     MujocoAsset,
     NormalizeGeomNames,
@@ -65,6 +66,7 @@ def build_a2_piper(base: MujocoAsset, arm: MujocoAsset) -> MujocoAsset:
         [
             NormalizeGeomNames(),
             ReplaceCylinderWithCapsule(),
+            EditBodies("arm_.*", gravcomp=0),
             RenameBodies(
                 {
                     "arm_link7": "gripper_right",

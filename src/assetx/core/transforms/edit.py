@@ -351,6 +351,41 @@ class RenameBodies(Transform):
         return replace(asset, spec=spec)
 
 
+class EditBodies(Transform):
+    """Set attributes on bodies whose names match regex pattern(s).
+
+    Example
+    -------
+    ::
+
+        EditBodies("arm_link.*", gravcomp=0)
+        EditBodies(["arm_.*", "gripper_.*"], gravcomp=0)
+    """
+
+    def __init__(self, patterns: str | list[str], **attrs: object) -> None:
+        if isinstance(patterns, str):
+            self.patterns = [patterns]
+        else:
+            self.patterns = list(patterns)
+        if not self.patterns:
+            raise ValueError("EditBodies requires at least one name pattern")
+        if not attrs:
+            raise ValueError("EditBodies requires at least one attribute to set")
+        self.attrs = attrs
+
+    def transform(self, asset: MujocoAsset) -> MujocoAsset:
+        spec = asset.spec.copy()
+        for body in spec.bodies:
+            if not _name_matches(body.name or "", self.patterns):
+                continue
+            for key, value in self.attrs.items():
+                if not hasattr(body, key):
+                    raise ValueError(f"EditBodies: body has no attribute {key!r}")
+                setattr(body, key, value)
+        spec.compile()
+        return replace(asset, spec=spec)
+
+
 class NormalizeGeomNames(Transform):
     """Assign proper names for geoms without names.
 

@@ -9,7 +9,7 @@ from assetx import (
     Compose,
     NormalizeGeomNames,
     RenameBodies,
-    AddSite,
+    AddDummyBody,
     RemoveGeoms,
     ApproximateWithAABB,
     assemble,
@@ -58,13 +58,12 @@ def build_rov_arx(base: MujocoAsset, arm: MujocoAsset) -> MujocoAsset:
                     "arm_link8": "gripper_left",
                 }
             ),
-            AddSite(
-                body_path="gripper_base",
-                name="grasp_site",
-                # Between the X5A finger mounts (link7/8 at ~x=0.087).
-                pos=(0.09, 0.0, 0.0),
-                size=(0.01, 0.01, 0.01),
-                type="sphere",
+            AddDummyBody(
+                parent_path="gripper_base",
+                name="grasp_point",
+                pos=(0.1, 0.0, 0.0),
+                align_to="world",
+                marker_size=0.01,
                 rgba=(1.0, 0.0, 0.0, 0.6),
             ),
             RemoveGeoms(
@@ -73,8 +72,9 @@ def build_rov_arx(base: MujocoAsset, arm: MujocoAsset) -> MujocoAsset:
             # replace base_link collision geoms one AABB
             ApproximateWithAABB(
                 [["base_link_collision0"]],
-                names=[["base_link_collision0"]],
+                names=["base_link_collision0"],
                 replace=True,
+                size_scale=(1.0, 1.0, 0.9),
             )
         ]
     )
