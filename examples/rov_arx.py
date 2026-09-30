@@ -1,0 +1,127 @@
+from __future__ import annotations
+
+import argparse
+import math
+from pathlib import Path
+
+from assetx import (
+    MujocoAsset,
+    Compose,
+    NormalizeGeomNames,
+    RenameBodies,
+    AddDummyBody,
+    RemoveGeoms,
+    ApproximateWithAABB,
+    assemble,
+    asset_builder,
+)
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]  # lab51/
+DEFAULT_ROV = _REPO_ROOT / "aa-projects/aa-robot-models/underwater/BlueROVHeavy.xml"
+DEFAULT_ARX = _REPO_ROOT / "reference/ARX_Model/X5/X5A/urdf/X5A.xml"
+
+
+@asset_builder
+def load_rov(xml_path: str | Path) -> MujocoAsset:
+    return MujocoAsset.from_file(xml_path)
+
+
+@asset_builder
+def load_arx(xml_path: str | Path) -> MujocoAsset:
+    return MujocoAsset.from_file(xml_path)
+
+
+@asset_builder
+def build_rov_arx(base: MujocoAsset, arm: MujocoAsset) -> MujocoAsset:
+    """Mount ARX X5A on BlueROVHeavy ``base_link``.
+
+    Child bodies are prefixed with ``arm_``. Gripper finger / wrist links are
+    renamed for downstream policies (same convention as ``a2_piper``).
+    """
+    asset = assemble(
+        parent=base,
+        child=arm,
+        parent_link="base_link",
+        child_prefix="arm_",
+        # Top-center of the ROV hull; tweak after visual inspection.
+        translation=(0.0, 0.0, -0.1),
+        rotation=(math.pi, 0.0, 0.0),
+    )
+    transform = Compose(
+        [
+            NormalizeGeomNames(),
+            RenameBodies(
+                {
+                    "arm_link6": "gripper_base",
+                    "arm_link7": "gripper_right",
+                    "arm_link8": "gripper_left",
+                }
+            ),
+            AddDummyBody(
+                parent_path="gripper_base",
+                name="grasp_point",
+                pos=(0.1, 0.0, 0.0),
+                align_to="world",
+                marker_size=0.01,
+                rgba=(1.0, 0.0, 0.0, 0.6),
+            ),
+            RemoveGeoms(
+                [f"rotor_{i}_collision" for i in range(7)]
+            ),
+            # replace base_link collision geoms one AABB
+            ApproximateWithAABB(
+                [["base_link_collision0"]],
+                names=["base_link_collision0"],
+                replace=True,
+                size_scale=(1.0, 1.0, 0.9),
+            )
+        ]
+    )
+    return transform.transform(asset)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Assemble BlueROVHeavy + ARX X5A into one MJCF asset."
+    )
+    parser.add_argument(
+        "--rov",
+        type=Path,
+        default=DEFAULT_ROV,
+        help="Path to BlueROVHeavy MJCF XML.",
+    )
+    parser.add_argument(
+        "--arx",
+        type=Path,
+        default=DEFAULT_ARX,
+        help="Path to ARX X5A MJCF XML (from urdf2mjcf).",
+    )
+    parser.add_argument(
+        "--output",
+        "-o",
+        type=Path,
+        default=Path("artifacts/rov_arx"),
+        help="Output directory for the assembled model.",
+    )
+    parser.add_argument(
+        "--no-viewer",
+        action="store_true",
+        help="Skip the MuJoCo viewer after export.",
+    )
+    args = parser.parse_args()
+
+    robot = build_rov_arx(load_rov(args.rov), load_arx(args.arx))
+    saved = robot.save(args.output, copy_meshes=True)
+    print(saved.xml_path)
+
+    if args.no_viewer:
+        return
+
+    from assetx import launch_preview
+
+    launch_preview(robot)
+
+
+if __name__ == "__main__":
+    main()
