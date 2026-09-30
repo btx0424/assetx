@@ -686,6 +686,7 @@ class ApproximateWithCapsule(Transform):
                 capsule.pos = fit.pos
                 capsule.quat = fit.quat
                 _copy_contact_attrs(capsule, template)
+                capsule.classname = template.classname
                 capsule.rgba = _default_approx_rgba(template, self.rgba)
 
         spec.compile()

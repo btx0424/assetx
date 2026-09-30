@@ -1,4 +1,4 @@
-"""``assetx`` command line: list, cook, check and preview registered recipes."""
+"""``assetx`` command line: list, cook, check, preview and render registered recipes."""
 
 from __future__ import annotations
 
@@ -45,6 +45,19 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--no-ground", action="store_true")
     p.add_argument("--no-lighting", action="store_true")
 
+    p = sub.add_parser("render", help="Write visual and collision preview images.")
+    p.add_argument("name")
+    p.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="Output directory (default: artifacts/<name>/preview).",
+    )
+    p.add_argument("--no-ground", action="store_true")
+    p.add_argument("--no-lighting", action="store_true")
+    p.add_argument("--width", type=int, default=640)
+    p.add_argument("--height", type=int, default=480)
+
     args = parser.parse_args(argv)
     if args.command == "list":
         for name in list_recipes():
@@ -75,6 +88,20 @@ def main(argv: list[str] | None = None) -> None:
             viewer="viser" if args.viser else "mujoco",
             port=args.port,
         )
+    elif args.command == "render":
+        from assetx.core.preview import render_preview
+
+        out = args.out or Path("artifacts") / args.name / "preview"
+        written = render_preview(
+            get_recipe(args.name).build(),
+            out,
+            ground=not args.no_ground,
+            lighting=not args.no_lighting,
+            width=args.width,
+            height=args.height,
+        )
+        for mode, path in written.items():
+            print(f"{args.name}: {mode} -> {path}")
 
 
 if __name__ == "__main__":

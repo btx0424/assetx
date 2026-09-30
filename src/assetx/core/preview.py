@@ -1,9 +1,16 @@
-"""MuJoCo / Viser viewer helpers for interactive previews (never written to disk)."""
+"""MuJoCo / Viser preview helpers.
+
+``launch_preview`` opens an interactive viewer and writes nothing.
+``render_preview`` writes offscreen visual / collision images.
+"""
 
 from __future__ import annotations
 
+import struct
 import time
+import zlib
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import mujoco
@@ -500,3 +507,125 @@ def launch_preview(
         _launch_viser_preview(model, data, port=port)
     else:
         _launch_mujoco_preview(model, data)
+
+
+_RENDER_VIEWS = ((135.0, -18.0), (90.0, -6.0), (0.0, -6.0))
+
+
+def _body_color(index: int) -> tuple[float, float, float]:
+    """Deterministic bright color from a body index."""
+    hue = (index * 0.618033988749895) % 1.0
+    h = hue * 6.0
+    x = 1.0 - abs(h % 2.0 - 1.0)
+    sector = int(h)
+    r, g, b = ((1.0, x, 0.0), (x, 1.0, 0.0), (0.0, 1.0, x), (0.0, x, 1.0), (x, 0.0, 1.0), (1.0, 0.0, x))[sector]
+    return tuple(0.25 + 0.7 * c for c in (r, g, b))
+
+
+def _write_png(path: Path, rgb: np.ndarray) -> None:
+    image = np.ascontiguousarray(rgb, dtype=np.uint8)
+    if image.ndim != 3 or image.shape[2] != 3:
+        raise ValueError(f"expected an (H, W, 3) uint8 image, got {image.shape}")
+    height, width, _ = image.shape
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+
+    raw = b"".join(b"\x00" + image[y].tobytes() for y in range(height))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(raw, 9))
+        + chunk(b"IEND", b"")
+    )
+
+
+def render_preview(
+    source: "MujocoAsset | mujoco.MjSpec",
+    out_dir: str | Path,
+    *,
+    ground: bool = True,
+    lighting: bool = True,
+    float_clearance: float = _DEFAULT_FLOAT_CLEARANCE,
+    width: int = 640,
+    height: int = 480,
+    views: tuple[tuple[float, float], ...] = _RENDER_VIEWS,
+) -> dict[str, Path]:
+    """Write ``visual.png`` and ``collision.png`` into ``out_dir``.
+
+    Each image is a horizontal strip, one tile per ``(azimuth, elevation)`` view.
+    The visual image hides collision geoms (``contype`` or ``conaffinity`` nonzero).
+    The collision image hides everything else and colors each body's geoms
+    differently. Collision geoms are often in group 3, which the default viewer
+    hides, so every geom group is enabled.
+
+    Requires a working MuJoCo offscreen backend (``MUJOCO_GL=egl`` on a headless
+    machine). Returns the written paths.
+    """
+    if width < 1 or height < 1:
+        raise ValueError(f"width and height must be positive, got {width}x{height}")
+    if not views:
+        raise ValueError("views must contain at least one (azimuth, elevation) pair")
+
+    spec = _resolve_source_spec(source).copy()
+    spec.visual.global_.offwidth = max(int(spec.visual.global_.offwidth), width)
+    spec.visual.global_.offheight = max(int(spec.visual.global_.offheight), height)
+    model = compile_for_preview(spec, lighting=lighting, ground=ground)
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    if ground:
+        _float_above_ground(model, data, clearance=float_clearance)
+
+    floor_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "preview_floor")
+    robot = [gid for gid in range(model.ngeom) if gid != floor_id]
+    if not robot:
+        raise ValueError("preview model has no geoms to render")
+    collision = np.array([_is_collision_geom(model, gid) for gid in range(model.ngeom)])
+    rgba0 = model.geom_rgba.copy()
+    mat0 = model.geom_matid.copy()
+
+    points = data.geom_xpos[robot]
+    lookat = points.mean(axis=0)
+    radius = float(np.linalg.norm(points - lookat, axis=1).max() + model.geom_rbound[robot].max())
+    distance = max(2.2 * radius, 0.3)
+
+    option = mujoco.MjvOption()
+    option.geomgroup[:] = 1
+    renderer = mujoco.Renderer(model, height=height, width=width)
+
+    def show(mode: str) -> None:
+        model.geom_rgba[:] = rgba0
+        model.geom_matid[:] = mat0
+        for gid in robot:
+            if mode == "visual" and collision[gid]:
+                model.geom_rgba[gid, 3] = 0.0
+                model.geom_matid[gid] = -1
+            elif mode == "collision":
+                model.geom_matid[gid] = -1
+                if collision[gid]:
+                    model.geom_rgba[gid] = (*_body_color(int(model.geom_bodyid[gid])), 1.0)
+                else:
+                    model.geom_rgba[gid, 3] = 0.0
+
+    out = Path(out_dir)
+    written: dict[str, Path] = {}
+    try:
+        for mode in ("visual", "collision"):
+            show(mode)
+            tiles = []
+            for azimuth, elevation in views:
+                camera = mujoco.MjvCamera()
+                camera.lookat[:] = lookat
+                camera.distance = distance
+                camera.azimuth = float(azimuth)
+                camera.elevation = float(elevation)
+                renderer.update_scene(data, camera=camera, scene_option=option)
+                # render() returns a view of one buffer, overwritten on the next call.
+                tiles.append(renderer.render().copy())
+            path = out / f"{mode}.png"
+            _write_png(path, np.concatenate(tiles, axis=1))
+            written[mode] = path
+    finally:
+        renderer.close()
+    return written

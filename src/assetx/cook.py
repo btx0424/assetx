@@ -26,9 +26,10 @@ MANIFEST_VERSION = 1
 _PACKAGE_ROOT = Path(__file__).resolve().parent
 # Package code that cannot change a cooked bundle. Recipe modules are hashed
 # individually (only the one defining the recipe).
-_HASH_EXCLUDE = ("recipes/", "core/preview.py", "cli.py")
+_HASH_EXCLUDE = ("recipes/", "core/preview.py", "cli.py", "fetch.py")
 # Other recipe modules are excluded so editing one recipe doesn't stale every bundle,
 # but the registry decides the vendor layout, which shows up in mesh paths.
+# fetch.py only changes how pinned vendor files are transported, not their content.
 _HASH_INCLUDE = ("recipes/registry.py",)
 
 

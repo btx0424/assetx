@@ -123,6 +123,7 @@ uv run assetx list                                 # registered recipes
 uv run assetx cook spot spot_arm --out-root DIR    # -> DIR/<name>/{model.xml,model.urdf,meshes/,usd/,assetx.json}
 uv run assetx status --out-root DIR                # exit 1 if any bundle is missing or stale
 uv run assetx preview spot [--viser]               # build in memory and open a viewer
+uv run assetx render spot                          # -> artifacts/spot/preview/{visual,collision}.png
 ```
 
 | Recipe | Vendor |
@@ -136,8 +137,22 @@ uv run assetx preview spot [--viser]               # build in memory and open a 
   `cook` skips bundles whose hash matches (use `--force` to rebuild).
   `status` and `assetx.cook.check()` report a bundle as stale when the hash
   differs, and as foreign when there is no manifest.
+- **Previews.** `assetx render NAME` writes `visual.png` and `collision.png`
+  (three views each) with MuJoCo's offscreen renderer. Collision geoms are
+  colored per body. On a headless machine set `MUJOCO_GL=egl`. The images are
+  not part of a cooked bundle and do not affect the staleness hash.
 - **Vendor cache.** Pinned vendor trees are fetched once into
   `$ASSETX_CACHE_DIR/vendor/` (default `~/.cache/assetx/vendor/`).
+- **Unreliable networks.** Fetching lists the directory with the GitHub API
+  and downloads files from `raw.githubusercontent.com`. If that fails
+  (connection resets, timeouts, API rate limits), it falls back to a sparse,
+  blob-filtered `git` fetch of just that directory, first over HTTPS, then over
+  SSH (`git@github.com`, needs a GitHub SSH key). Other options:
+  - `HTTPS_PROXY=http://host:port` is honored by the HTTP path and by git over HTTPS.
+  - Offline: copy `~/.cache/assetx/vendor/<owner>__<repo>__<sha>/` from a
+    machine that has it (a directory with `.assetx_fetch.json` counts as
+    complete), or copy the cooked bundles themselves; `status` accepts them as
+    long as both machines run the same assetx.
 - **Atomic.** A cook builds into a temporary sibling directory under a file lock
   and swaps it in, so readers never see a half-written bundle.
 - **USD.** On by default (`--no-usd` skips it); see below.

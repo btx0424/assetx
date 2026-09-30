@@ -7,6 +7,7 @@ from assetx.core.preview import (
     apply_rig_joint_values,
     compile_for_preview,
     launch_preview,
+    render_preview,
     list_rig_joints,
 )
 from assetx.core.transforms import (
@@ -85,6 +86,7 @@ __all__ = [
     "split_capsule_fit",
     "get_asset_builder",
     "launch_preview",
+    "render_preview",
     "list_asset_builders",
     "list_rig_joints",
 ]

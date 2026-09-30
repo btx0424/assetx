@@ -67,6 +67,7 @@ Collision geom names from USD→MJCF: `{body}_collision` / `{body}_collision{N}`
 | URDF↔MJCF | `conversion/urdf2mjcf.py` or `conversion/mjcf2urdf.py` |
 | Research / viz | `tools/research/` |
 | Tests | `tests/test_<feature>.py` |
+| Collision mesh → capsule | `.agent/skills/collision-simplification/SKILL.md` |
 
 Do **not** put generated outputs under `src/`.
 

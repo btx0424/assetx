@@ -7,6 +7,7 @@ from pathlib import Path
 from assetx.core.asset import MujocoAsset
 from assetx.core.transforms import (
     AddDummyBody,
+    ApproximateWithCapsule,
     Compose,
     GeomsToBody,
     NormalizeGeomNames,
@@ -39,6 +40,27 @@ def _base_transforms() -> list[Transform]:
             GeomsToBody([leg.upper()], f"{leg}_foot", mass=0.05)
             for leg in ("fl", "fr", "hl", "hr")
         ),
+        # Upper-leg collision meshes are nearly cylindrical (bbox ~0.12 x 0.15 x
+        # 0.44 m). One PCA capsule covers them; a chain does not fit better.
+        # coverage_quantile=0.95 drops the mesh's corner outliers (recall ~0.99)
+        # instead of inflating the radius to contain them.
+        ApproximateWithCapsule(
+            [[f"{leg}_uleg_collision0"] for leg in ("fl", "fr", "hl", "hr")],
+            names=[f"{leg}_uleg_collision0" for leg in ("fl", "fr", "hl", "hr")],
+            replace=True,
+            coverage_quantile=0.95,
+            radius_scale=0.6, # 1.0 is too thick, DO NOT CHANGE THIS VALUE
+        ),
+        # Lower legs are straight tubes (bbox ~0.07 x 0.05 x 0.38 m). A chain
+        # does not fit better. Keep radius_scale at 1: the cross-section is
+        # flatter than the upper leg, and shrinking it leaves the wide side out.
+        ApproximateWithCapsule(
+            [[f"{leg}_lleg_collision0"] for leg in ("fl", "fr", "hl", "hr")],
+            names=[f"{leg}_lleg_collision0" for leg in ("fl", "fr", "hl", "hr")],
+            replace=True,
+            coverage_quantile=0.95,
+            radius_scale=0.9,
+        ),
     ]
 
 
@@ -52,6 +74,13 @@ def spot_arm(vendor_dir: Path) -> MujocoAsset:
     return Compose(
         [
             *_base_transforms(),
+            # Upper arm and forearm are straight tubes. The el1 lip stays a mesh.
+            ApproximateWithCapsule(
+                [["arm_link_hr0_collision0"], ["arm_link_el1_collision0"]],
+                names=["arm_link_hr0_collision0", "arm_link_el1_collision0"],
+                replace=True,
+                coverage_quantile=0.95,
+            ),
             AddDummyBody(
                 parent_path="arm_link_wr1",
                 name="grasp_point",

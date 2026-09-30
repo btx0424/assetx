@@ -167,3 +167,50 @@ def test_approximate_with_capsule_num_capsules() -> None:
     assert out.spec.geom("link_collision") is None
     assert out.spec.geom("link_capsule_0") is not None
     assert out.spec.geom("link_capsule_1") is not None
+
+
+def test_spot_uleg_collision_is_one_capsule() -> None:
+    import pytest
+
+    from assetx.fetch import parse_github_dir_url
+    from assetx.recipes import get_recipe
+    from assetx.recipes.registry import cache_dir
+    from assetx.recipes.spot import MENAGERIE_SPOT
+
+    ref = parse_github_dir_url(MENAGERIE_SPOT)
+    vendor = cache_dir() / "vendor" / f"{ref.owner}__{ref.repo}__{ref.ref}" / ref.path
+    if not (vendor / "spot.xml").is_file():
+        pytest.skip(f"Spot vendor asset not cached at {vendor}")
+
+    asset = get_recipe("spot").build()
+    fits = {}
+    for leg in ("fl", "fr", "hl", "hr"):
+        geom = asset.spec.geom(f"{leg}_uleg_collision0")
+        assert geom is not None
+        assert geom.type == mujoco.mjtGeom.mjGEOM_CAPSULE
+        radius, half = float(geom.size[0]), float(geom.size[1])
+        assert 0.03 < radius < 0.06, radius
+        assert 0.12 < half < 0.17, half
+        fits[leg] = np.array([*geom.size[:2], *geom.pos], dtype=float)
+    # Front and rear legs share one mesh, so their fits match. Left and right
+    # meshes differ, so those fits are not forced to be mirrors.
+    assert np.allclose(fits["fl"], fits["hl"])
+    assert np.allclose(fits["fr"], fits["hr"])
+    for leg in ("fl", "fr", "hl", "hr"):
+        shin = asset.spec.geom(f"{leg}_lleg_collision0")
+        assert shin is not None
+        assert shin.type == mujoco.mjtGeom.mjGEOM_CAPSULE
+        assert 0.03 < float(shin.size[0]) < 0.05
+        assert 0.12 < float(shin.size[1]) < 0.18
+
+    arm = get_recipe("spot_arm").build()
+    for name, radius_hi, half_lo in (
+        ("arm_link_hr0_collision0", 0.06, 0.12),
+        ("arm_link_el1_collision0", 0.06, 0.06),
+    ):
+        geom = arm.spec.geom(name)
+        assert geom is not None and geom.type == mujoco.mjtGeom.mjGEOM_CAPSULE
+        assert 0.02 < float(geom.size[0]) < radius_hi
+        assert float(geom.size[1]) > half_lo
+    lip = arm.spec.geom("arm_link_el1_collision1")
+    assert lip is not None and lip.type == mujoco.mjtGeom.mjGEOM_MESH

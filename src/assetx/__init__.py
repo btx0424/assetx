@@ -42,6 +42,7 @@ from assetx.core import (
     split_capsule_fit,
     get_asset_builder,
     launch_preview,
+    render_preview,
     list_asset_builders,
     list_rig_joints,
 )
@@ -95,6 +96,7 @@ __all__ = [
     "split_capsule_fit",
     "get_asset_builder",
     "launch_preview",
+    "render_preview",
     "list_asset_builders",
     "list_rig_joints",
     "parse_github_dir_url",

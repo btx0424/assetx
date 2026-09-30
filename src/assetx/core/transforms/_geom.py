@@ -56,7 +56,8 @@ def mesh_surface_samples_local(
     faces = np.asarray(model.mesh_face[face_adr : face_adr + facenum], dtype=int)
     mesh = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
     sample_count = min(count, max(len(verts) * 4, 256))
-    samples, _ = trimesh.sample.sample_surface(mesh, sample_count)
+    # Fixed seed: capsule fits must not change between cooks.
+    samples, _ = trimesh.sample.sample_surface(mesh, sample_count, seed=0)
     return np.asarray(samples, dtype=float)
 
 
