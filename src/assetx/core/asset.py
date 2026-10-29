@@ -252,7 +252,19 @@ class MujocoAsset:
 
         if save_usd:
             from assetx.conversion.usd.newton import mjcf_to_usd
+            from assetx.conversion.usd.visual_meshes import (
+                find_visual_mesh_sources,
+                load_visual_mesh_sources,
+                write_visual_mesh_sources,
+            )
 
+            sources = find_visual_mesh_sources(self.xml_path)
+            if sources is not None:
+                # Beside model.xml, where mjcf_to_usd looks when no path is passed.
+                write_visual_mesh_sources(
+                    root / "visual_mesh_sources.json",
+                    load_visual_mesh_sources(sources),
+                )
             mjcf_to_usd(output_xml, root / "usd")
 
         return MujocoAsset.from_file(output_xml)

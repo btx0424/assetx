@@ -114,6 +114,7 @@ def mjcf_to_usd(
     comment: str = "",
     verbose: bool = False,
     converter_version: str = MJCF_CONVERTER_VERSION,
+    visual_mesh_sources: str | Path | None = None,
 ) -> Path:
     """Convert ``mjcf`` to USD and return the path of the primary USD file.
 
@@ -125,6 +126,10 @@ def mjcf_to_usd(
     writes an Atomic Component (``<model>.usda`` + payloaded layers) and is
     incompatible with ``flatten``. ``physics_scene`` is off by default since
     the simulator authors its own.
+
+    When a visual-mesh sources map is provided (or found beside ``mjcf``), DAE
+    origins are baked to ``output_dir/visual_meshes/*.usda`` and swapped onto
+    ``*/visuals/*`` after flatten. STL/OBJ visuals are unchanged.
     """
     if flatten and layer_structure:
         raise ValueError("flatten requires a single-layer output (layer_structure=False)")
@@ -133,10 +138,40 @@ def mjcf_to_usd(
     run_converter(MJCF_CONVERTER_PACKAGE, converter_version, "mujoco_usd_converter", args)
 
     usd_path = newest_usd_file(out)
-    _postprocess(
-        MJCF_CONVERTER_PACKAGE, converter_version, usd_path, *(["--flatten"] if flatten else [])
-    )
+    flags: list[str] = []
+    if flatten:
+        flags.append("--flatten")
+    baked = _bake_visual_meshes(mjcf, out, visual_mesh_sources)
+    if baked is not None:
+        flags += ["--prefer-visual-meshes", str(baked)]
+    _postprocess(MJCF_CONVERTER_PACKAGE, converter_version, usd_path, *flags)
     return usd_path
+
+
+def _bake_visual_meshes(
+    mjcf: Path,
+    out_dir: Path,
+    visual_mesh_sources: str | Path | None,
+) -> Path | None:
+    from assetx.conversion.usd.visual_meshes import (
+        bake_visual_mesh_sources,
+        find_visual_mesh_sources,
+        load_visual_mesh_sources,
+    )
+
+    sources_path = (
+        Path(visual_mesh_sources).resolve()
+        if visual_mesh_sources is not None
+        else find_visual_mesh_sources(mjcf)
+    )
+    if sources_path is None or not sources_path.is_file():
+        return None
+    mapping = load_visual_mesh_sources(sources_path)
+    if not mapping:
+        return None
+    baked_dir = out_dir / "visual_meshes"
+    baked = bake_visual_mesh_sources(mapping, baked_dir)
+    return baked_dir if baked else None
 
 
 def urdf_to_usd(

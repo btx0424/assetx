@@ -107,6 +107,10 @@ def test_flatten_preserves_poses_and_targets(tmp_path: Path) -> None:
     assert bound.ComputeBoundMaterial()[0].GetPath() == Sdf.Path("/robot/Materials/red")
     assert stage.GetPrimAtPath("/robot").HasAPI(UsdPhysics.ArticulationRootAPI) is False
     assert stage.GetPrimAtPath("/robot/base").HasAPI(UsdPhysics.ArticulationRootAPI)
+    foot = UsdGeom.Imageable(stage.GetPrimAtPath("/robot/shin/collisions/foot"))
+    visual = UsdGeom.Imageable(stage.GetPrimAtPath("/robot/shin/visuals/visual"))
+    assert foot.GetPurposeAttr().Get() == UsdGeom.Tokens.guide
+    assert visual.GetPurposeAttr().Get() in (None, UsdGeom.Tokens.default_)
 
 
 def test_flatten_without_grouping_and_grouping_is_idempotent(tmp_path: Path) -> None:

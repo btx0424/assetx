@@ -334,9 +334,100 @@ def flatten_articulation(
     return {str(k): str(v) for k, v in moves.items()}
 
 
+def mark_collisions_as_guide(usd_path: str | Path) -> int:
+    """Set ``purpose=guide`` on collision geometry so Kit does not draw it as a solid.
+
+    Isaac Sim's URDF importer does the same: collisions keep ``CollisionAPI`` for
+    physics but use guide purpose so the viewport shows visual meshes. Without
+    this, colored collision boxes/spheres dominate the view and look like the
+    robot's visual. Returns the number of Imageable prims updated.
+    """
+    from pxr import Usd, UsdGeom, UsdPhysics
+
+    stage = Usd.Stage.Open(str(usd_path))
+    if stage is None:
+        raise RuntimeError(f"Failed to open USD stage: {usd_path}")
+
+    targets: list = []
+    for prim in stage.Traverse():
+        if prim.GetName() == COLLISIONS_GROUP and prim.GetParent().HasAPI(UsdPhysics.RigidBodyAPI):
+            targets.extend(Usd.PrimRange(prim))
+        elif prim.HasAPI(UsdPhysics.CollisionAPI):
+            targets.append(prim)
+
+    updated = 0
+    seen: set[str] = set()
+    for prim in targets:
+        path = str(prim.GetPath())
+        if path in seen or not prim.IsA(UsdGeom.Imageable):
+            continue
+        seen.add(path)
+        imageable = UsdGeom.Imageable(prim)
+        if imageable.GetPurposeAttr().Get() == UsdGeom.Tokens.guide:
+            continue
+        imageable.CreatePurposeAttr().Set(UsdGeom.Tokens.guide)
+        updated += 1
+    if updated:
+        stage.GetRootLayer().Save()
+    return updated
+
+
+def prefer_visual_meshes(usd_path: str | Path, visual_mesh_dir: str | Path) -> int:
+    """Replace STL-baked ``*/visuals/*`` Mesh prims with references to authored USDA.
+
+    ``visual_mesh_dir/<prim_name>.usda`` is used when present (DAE origins baked
+    by :mod:`assetx.conversion.usd.visual_meshes`). The local transform is kept.
+    STL-only visuals have no sidecar and stay as the converter wrote them.
+    Returns the number of prims replaced.
+    """
+    from pxr import Usd, UsdGeom
+
+    visual_mesh_dir = Path(visual_mesh_dir).resolve()
+    if not visual_mesh_dir.is_dir():
+        return 0
+
+    usd_path = Path(usd_path).resolve()
+    stage, layer, root = _open_single_layer(usd_path)
+    usd_dir = usd_path.parent
+
+    targets: list = []
+    for prim in Usd.PrimRange(root):
+        if not prim.IsA(UsdGeom.Mesh):
+            continue
+        parent = prim.GetParent()
+        if parent is None or parent.GetName() != VISUALS_GROUP:
+            continue
+        asset = visual_mesh_dir / f"{prim.GetName()}.usda"
+        if asset.is_file():
+            targets.append((prim.GetPath(), asset))
+
+    if not targets:
+        return 0
+
+    for path, asset in targets:
+        prim = stage.GetPrimAtPath(path)
+        # Keep the converter's xform ops. Drop the STL reference/payload and
+        # the Mesh type so the authored USDA (an Xform of colored parts) wins.
+        prim.GetReferences().ClearReferences()
+        prim.GetPayloads().ClearPayloads()
+        prim.SetTypeName("Xform")
+
+        try:
+            rel = asset.relative_to(usd_dir).as_posix()
+        except ValueError:
+            rel = asset.as_posix()
+        ref_path = rel if rel.startswith(".") else f"./{rel}"
+        if not prim.GetReferences().AddReference(ref_path):
+            raise RuntimeError(f"Failed to reference {ref_path} at {path}")
+
+    layer.Save()
+    return len(targets)
+
+
 def _post_group(usd_path: str | Path, geometry: bool, joints: bool) -> None:
     if geometry:
         group_body_geometry(usd_path)
+        mark_collisions_as_guide(usd_path)
     if joints:
         group_joint_prims(usd_path)
 
@@ -348,6 +439,11 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("usd", type=Path)
     parser.add_argument("--remove-world-fixed-joints", action="store_true")
     parser.add_argument("--flatten", action="store_true")
+    parser.add_argument(
+        "--prefer-visual-meshes",
+        type=Path,
+        help="Directory of <stem>.usda assets to swap onto */visuals/* Mesh prims",
+    )
     args = parser.parse_args(argv)
     if args.remove_world_fixed_joints:
         for path in remove_world_fixed_joints(args.usd):
@@ -355,6 +451,9 @@ def main(argv: list[str] | None = None) -> None:
     if args.flatten:
         moves = flatten_articulation(args.usd)
         print(f"Flattened {len(moves)} nested rigid bodies under the robot prim")
+    if args.prefer_visual_meshes is not None:
+        n = prefer_visual_meshes(args.usd, args.prefer_visual_meshes)
+        print(f"Preferred authored visuals on {n} mesh prims")
 
 
 # Run standalone (``python postprocess.py``) inside the converter's environment,
