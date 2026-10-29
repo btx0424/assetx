@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 import shutil
+import xml.etree.ElementTree as ET
 from typing import Any, Literal
 
 import mujoco
@@ -19,6 +20,55 @@ def _convert_mesh_file(src: Path, dest: Path, mesh_format: str) -> None:
     if not isinstance(mesh, trimesh.Trimesh) or len(mesh.faces) == 0:
         raise ValueError(f"Cannot convert {src} to {mesh_format}: no triangles")
     mesh.export(str(dest), file_type=mesh_format)
+
+
+def _local_tag(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def _class_geom_types(root: ET.Element) -> dict[str | None, str]:
+    """Map each default class to the geom type its members inherit.
+
+    ``None`` is the top-level ``<default>``. A class with no ``type`` keeps
+    its parent's type; the XML builtin default is sphere.
+    """
+    types: dict[str | None, str] = {None: "sphere"}
+
+    def walk(elem: ET.Element, inherited: str) -> None:
+        own = inherited
+        for child in elem:
+            if _local_tag(child.tag) == "geom" and child.get("type"):
+                own = child.get("type")
+                break
+        types[elem.get("class")] = own
+        for child in elem:
+            if _local_tag(child.tag) == "default":
+                walk(child, own)
+
+    for child in root:
+        if _local_tag(child.tag) == "default":
+            walk(child, "sphere")
+    return types
+
+
+def _stamp_inherited_spheres(
+    elem: ET.Element,
+    parent: ET.Element | None,
+    class_types: dict[str | None, str],
+    childclass: str | None,
+) -> None:
+    """Set ``type="sphere"`` on typeless geoms whose inherited type is sphere."""
+    tag = _local_tag(elem.tag)
+    next_childclass = elem.get("childclass") or childclass if tag == "body" else childclass
+    if tag == "geom" and not elem.get("type") and not elem.get("mesh"):
+        if parent is not None and _local_tag(parent.tag) == "default":
+            key: str | None = parent.get("class")
+        else:
+            key = elem.get("class") or childclass
+        if class_types.get(key, "sphere") == "sphere":
+            elem.set("type", "sphere")
+    for child in list(elem):
+        _stamp_inherited_spheres(child, elem, class_types, next_childclass)
 
 
 @dataclass(frozen=True)
@@ -92,27 +142,20 @@ class MujocoAsset:
 
     @staticmethod
     def _ensure_explicit_sphere_types(xml_path: Path) -> None:
-        """Re-insert ``type="sphere"`` omitted by MuJoCo ``to_file``.
+        """Write ``type="sphere"`` only for geoms that really are spheres.
 
-        XML's default geom type is sphere, so MuJoCo drops ``type="sphere"``.
-        On reload, a model-level ``<default><geom type="mesh"/></default>`` then
-        incorrectly makes those geoms meshes.
+        MuJoCo ``to_file`` omits ``type`` when it matches the geom's default
+        class. A capsule in ``class="collision"`` (itself ``type="capsule"``)
+        is therefore typeless, and so is a nested class that inherits that
+        type. Stamping every typeless geom as a sphere turns those capsules
+        into spheres. Spheres that differ from their class default are already
+        written with ``type="sphere"``.
         """
-        import re
-
-        def _repl(match: re.Match[str]) -> str:
-            tag = match.group(0)
-            if re.search(r"\stype=", tag) or re.search(r"\smesh=", tag):
-                return tag
-            if tag.endswith("/>"):
-                return tag[:-2] + ' type="sphere"/>'
-            return tag
-
-        text = xml_path.read_text(encoding="utf-8")
-        xml_path.write_text(
-            re.sub(r"<geom\b[^>]*/>", _repl, text),
-            encoding="utf-8",
-        )
+        tree = ET.parse(xml_path)
+        root = tree.getroot()
+        class_types = _class_geom_types(root)
+        _stamp_inherited_spheres(root, None, class_types, None)
+        tree.write(xml_path, encoding="unicode")
     def save(
         self,
         path: str | Path,
@@ -252,7 +295,19 @@ class MujocoAsset:
 
         if save_usd:
             from assetx.conversion.usd.newton import mjcf_to_usd
+            from assetx.conversion.usd.visual_meshes import (
+                find_visual_mesh_sources,
+                load_visual_mesh_sources,
+                write_visual_mesh_sources,
+            )
 
+            sources = find_visual_mesh_sources(self.xml_path)
+            if sources is not None:
+                # Beside model.xml, where mjcf_to_usd looks when no path is passed.
+                write_visual_mesh_sources(
+                    root / "visual_mesh_sources.json",
+                    load_visual_mesh_sources(sources),
+                )
             mjcf_to_usd(output_xml, root / "usd")
 
         return MujocoAsset.from_file(output_xml)

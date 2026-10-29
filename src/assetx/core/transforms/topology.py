@@ -10,22 +10,42 @@ from assetx.core.asset import MujocoAsset
 from assetx.core.transforms.base import Transform
 
 
+def _finite_vec(values, n: int) -> np.ndarray:
+    arr = np.asarray(values, dtype=float).reshape(-1)
+    if arr.size != n or not np.all(np.isfinite(arr)):
+        return np.zeros(n, dtype=float)
+    return arr
+
+
 def _body_inertial_in_parent(
     body: mujoco.MjsBody, body_pos: np.ndarray, body_rot: sRot
 ) -> tuple[float, np.ndarray, np.ndarray]:
-    ipos = np.asarray(body.ipos, dtype=float)
+    # Unset inertial is mass 0 with a NaN center of mass. ``0 * NaN`` would
+    # poison the combined tensor, so those bodies contribute nothing.
+    mass = float(body.mass)
+    if not np.isfinite(mass) or mass <= 0.0:
+        return 0.0, np.zeros(3), np.zeros((3, 3))
+
+    ipos = _finite_vec(body.ipos, 3)
+    inertia = _finite_vec(body.inertia, 3)
+    quat = _finite_vec(body.iquat, 4)
+    inertia_rot = (
+        sRot.identity()
+        if np.linalg.norm(quat) < 1e-12
+        else sRot.from_quat(quat, scalar_first=True)
+    )
     com_parent = body_pos + body_rot.apply(ipos)
-    inertia_diag = np.diag(np.asarray(body.inertia, dtype=float))
-    inertia_rot = sRot.from_quat(body.iquat, scalar_first=True)
     rot = (body_rot * inertia_rot).as_matrix()
-    inertia_about_com = rot @ inertia_diag @ rot.T
-    return float(body.mass), com_parent, inertia_about_com
+    inertia_about_com = rot @ np.diag(inertia) @ rot.T
+    return mass, com_parent, inertia_about_com
 
 
 def _combine_inertials_in_parent(
     entries: list[tuple[float, np.ndarray, np.ndarray]],
 ) -> tuple[float, np.ndarray, np.ndarray]:
-    total_mass = sum(mass for mass, _, _ in entries)
+    total_mass = float(sum(mass for mass, _, _ in entries))
+    if not np.isfinite(total_mass) or total_mass <= 0.0:
+        return 0.0, np.zeros(3), np.zeros((3, 3))
     com_parent = sum(mass * com for mass, com, _ in entries) / total_mass
 
     inertia_parent = np.zeros((3, 3))
@@ -46,15 +66,23 @@ def _set_body_inertial_in_frame(
     frame_rot: sRot,
 ) -> None:
     frame_rot_inv = frame_rot.inv()
-    com_local = frame_rot_inv.apply(com - frame_pos)
-    inertia_local = frame_rot_inv.as_matrix() @ inertia @ frame_rot_inv.as_matrix().T
+    com_local = np.nan_to_num(
+        frame_rot_inv.apply(com - frame_pos), nan=0.0, posinf=0.0, neginf=0.0
+    )
+    rot = frame_rot_inv.as_matrix()
+    inertia_local = rot @ np.asarray(inertia, dtype=float) @ rot.T
+    inertia_local = 0.5 * (inertia_local + inertia_local.T)
 
     eigvals, eigvecs = np.linalg.eigh(inertia_local)
+    # eigh may return a reflection; Rotation requires det = +1.
+    if float(np.linalg.det(eigvecs)) < 0.0:
+        eigvecs = eigvecs.copy()
+        eigvecs[:, 0] *= -1.0
     eigvals = np.clip(eigvals, 1e-12, None)
-    body.mass = mass
-    body.ipos = tuple(com_local.tolist())
-    body.inertia = tuple(eigvals.tolist())
-    body.iquat = tuple(sRot.from_matrix(eigvecs).as_quat(scalar_first=True).tolist())
+    body.mass = float(mass) if np.isfinite(mass) and mass > 0.0 else 0.0
+    body.ipos = tuple(float(v) for v in com_local)
+    body.inertia = tuple(float(v) for v in eigvals)
+    body.iquat = tuple(float(v) for v in sRot.from_matrix(eigvecs).as_quat(scalar_first=True))
     body.explicitinertial = 1
 
 
