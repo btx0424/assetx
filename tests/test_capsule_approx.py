@@ -169,20 +169,32 @@ def test_approximate_with_capsule_num_capsules() -> None:
     assert out.spec.geom("link_capsule_1") is not None
 
 
+def _load_assetx_example(name: str):
+    import importlib.util
+
+    import assetx
+
+    path = Path(assetx.__file__).resolve().parent.parent.parent / "examples" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(f"assetx_example_{name}", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_spot_uleg_collision_is_one_capsule() -> None:
     import pytest
 
     from assetx.fetch import parse_github_dir_url
-    from assetx.recipes import get_recipe
-    from assetx.recipes.registry import cache_dir
-    from assetx.recipes.spot import MENAGERIE_SPOT
+    from assetx.vendor import cache_dir
 
-    ref = parse_github_dir_url(MENAGERIE_SPOT)
+    spot = _load_assetx_example("spot")
+    ref = parse_github_dir_url(spot.MENAGERIE_SPOT)
     vendor = cache_dir() / "vendor" / f"{ref.owner}__{ref.repo}__{ref.ref}" / ref.path
     if not (vendor / "spot.xml").is_file():
         pytest.skip(f"Spot vendor asset not cached at {vendor}")
 
-    asset = get_recipe("spot").build()
+    asset = spot.build_spot(vendor)
     fits = {}
     for leg in ("fl", "fr", "hl", "hr"):
         geom = asset.spec.geom(f"{leg}_uleg_collision0")
@@ -203,7 +215,7 @@ def test_spot_uleg_collision_is_one_capsule() -> None:
         assert 0.03 < float(shin.size[0]) < 0.05
         assert 0.12 < float(shin.size[1]) < 0.18
 
-    arm = get_recipe("spot_arm").build()
+    arm = spot.build_spot_arm(vendor)
     for name, radius_hi, half_lo in (
         ("arm_link_hr0_collision0", 0.06, 0.12),
         ("arm_link_el1_collision0", 0.06, 0.06),

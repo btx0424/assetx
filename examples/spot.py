@@ -1,10 +1,11 @@
-"""Boston Dynamics Spot (mujoco_menagerie), with and without the arm."""
+"""Build Boston Dynamics Spot and Spot+arm MJCF from mujoco_menagerie."""
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
-from assetx.core.asset import MujocoAsset
+from assetx import MujocoAsset, launch_preview
 from assetx.core.transforms import (
     AddDummyBody,
     ApproximateWithCapsule,
@@ -18,7 +19,10 @@ from assetx.core.transforms import (
     RenameBodies,
     Transform,
 )
-from assetx.recipes.registry import recipe
+from assetx.fetch import add_fetch_argument, fetch_method_from_args
+from assetx.vendor import fetch_vendor
+
+_ARTIFACTS = Path("artifacts")
 
 MENAGERIE_SPOT = (
     "https://github.com/google-deepmind/mujoco_menagerie/tree/"
@@ -34,26 +38,17 @@ def _base_transforms() -> list[Transform]:
         RemoveActuators(names=[".*"]),
         RemoveSceneSettings(),
         RenameBodies({"body": "base_link"}),
-        # Vendor foot spheres FL/FR/HL/HR sit on *_lleg; give them their own
-        # bodies (at the sphere center) for per-foot contact / height terms.
         *(
             GeomsToBody([leg.upper()], f"{leg}_foot", mass=0.05)
             for leg in ("fl", "fr", "hl", "hr")
         ),
-        # Upper-leg collision meshes are nearly cylindrical (bbox ~0.12 x 0.15 x
-        # 0.44 m). One PCA capsule covers them; a chain does not fit better.
-        # coverage_quantile=0.95 drops the mesh's corner outliers (recall ~0.99)
-        # instead of inflating the radius to contain them.
         ApproximateWithCapsule(
             [[f"{leg}_uleg_collision0"] for leg in ("fl", "fr", "hl", "hr")],
             names=[f"{leg}_uleg_collision0" for leg in ("fl", "fr", "hl", "hr")],
             replace=True,
             coverage_quantile=0.95,
-            radius_scale=0.6, # 1.0 is too thick, DO NOT CHANGE THIS VALUE
+            radius_scale=0.6,
         ),
-        # Lower legs are straight tubes (bbox ~0.07 x 0.05 x 0.38 m). A chain
-        # does not fit better. Keep radius_scale at 1: the cross-section is
-        # flatter than the upper leg, and shrinking it leaves the wide side out.
         ApproximateWithCapsule(
             [[f"{leg}_lleg_collision0"] for leg in ("fl", "fr", "hl", "hr")],
             names=[f"{leg}_lleg_collision0" for leg in ("fl", "fr", "hl", "hr")],
@@ -64,17 +59,16 @@ def _base_transforms() -> list[Transform]:
     ]
 
 
-@recipe("spot", vendor=MENAGERIE_SPOT)
-def spot(vendor_dir: Path) -> MujocoAsset:
-    return Compose(_base_transforms()).transform(MujocoAsset.from_file(vendor_dir / "spot.xml"))
+def build_spot(vendor_dir: Path) -> MujocoAsset:
+    return Compose(_base_transforms()).transform(
+        MujocoAsset.from_file(vendor_dir / "spot.xml")
+    )
 
 
-@recipe("spot_arm", vendor=MENAGERIE_SPOT)
-def spot_arm(vendor_dir: Path) -> MujocoAsset:
+def build_spot_arm(vendor_dir: Path) -> MujocoAsset:
     return Compose(
         [
             *_base_transforms(),
-            # Upper arm and forearm are straight tubes. The el1 lip stays a mesh.
             ApproximateWithCapsule(
                 [["arm_link_hr0_collision0"], ["arm_link_el1_collision0"]],
                 names=["arm_link_hr0_collision0", "arm_link_el1_collision0"],
@@ -91,3 +85,39 @@ def spot_arm(vendor_dir: Path) -> MujocoAsset:
             ),
         ]
     ).transform(MujocoAsset.from_file(vendor_dir / "spot_arm.xml"))
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--arm",
+        action="store_true",
+        help="Build spot_arm (with grasp_point) instead of spot.",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Output directory (default: artifacts/spot or artifacts/spot_arm).",
+    )
+    parser.add_argument("--no-viewer", action="store_true")
+    add_fetch_argument(parser)
+    args = parser.parse_args()
+
+    vendor_dir = fetch_vendor(MENAGERIE_SPOT, method=fetch_method_from_args(args))
+    if args.arm:
+        robot = build_spot_arm(vendor_dir)
+        out = args.output or _ARTIFACTS / "spot_arm"
+    else:
+        robot = build_spot(vendor_dir)
+        out = args.output or _ARTIFACTS / "spot"
+    saved = robot.save(out)
+    print(saved.xml_path)
+
+    if args.no_viewer:
+        return
+    launch_preview(robot)
+
+
+if __name__ == "__main__":
+    main()

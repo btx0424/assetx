@@ -1,6 +1,5 @@
 from assetx.core.asset import JointCfg, MujocoAsset
 from assetx.core.assemble import assemble
-from assetx.core.builders import asset_builder, get_asset_builder, list_asset_builders
 from assetx.core.preview import (
     add_preview_ground,
     add_preview_light,
@@ -78,15 +77,12 @@ __all__ = [
     "apply_transforms",
     "apply_rig_joint_values",
     "assemble",
-    "asset_builder",
     "compile_for_preview",
     "fit_aabb",
     "fit_capsule_pca",
     "fit_capsule_chain_pca",
     "split_capsule_fit",
-    "get_asset_builder",
     "launch_preview",
     "render_preview",
-    "list_asset_builders",
     "list_rig_joints",
 ]

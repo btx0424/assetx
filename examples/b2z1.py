@@ -5,7 +5,6 @@ from pathlib import Path
 
 from assetx import (
     MujocoAsset,
-    asset_builder,
     Compose,
     AddJoint,
     JointCfg,
@@ -18,7 +17,6 @@ from assetx import (
 )
 
 
-@asset_builder
 def load_b2z1(xml_path: str | Path) -> MujocoAsset:
     asset = MujocoAsset.from_file(xml_path)
     transform = Compose(

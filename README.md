@@ -70,8 +70,7 @@ load. On a headless machine, use the Viser preview (`--viser`) or `--no-viewer`.
 
 ## Quick start
 
-Recipes are plain Python functions returning `MujocoAsset`. Use `@asset_builder`
-only if you want optional registration.
+Build functions are plain Python returning `MujocoAsset` (see `examples/`).
 
 ```python
 from assetx import (
@@ -81,18 +80,14 @@ from assetx import (
     RenameBodies,
     ReplaceCylinderWithCapsule,
     assemble,
-    asset_builder,
 )
 
-@asset_builder
 def load_base(path) -> MujocoAsset:
     return MujocoAsset.from_file(path)
 
-@asset_builder
 def load_arm(path) -> MujocoAsset:
     return MujocoAsset.from_file(path)
 
-@asset_builder
 def build_robot(base: MujocoAsset, arm: MujocoAsset) -> MujocoAsset:
     robot = assemble(
         parent=base,
@@ -143,11 +138,14 @@ uv run assetx render spot                          # -> artifacts/spot/preview/{
   not part of a cooked bundle and do not affect the staleness hash.
 - **Vendor cache.** Pinned vendor trees are fetched once into
   `$ASSETX_CACHE_DIR/vendor/` (default `~/.cache/assetx/vendor/`).
-- **Unreliable networks.** Fetching lists the directory with the GitHub API
-  and downloads files from `raw.githubusercontent.com`. If that fails
-  (connection resets, timeouts, API rate limits), it falls back to a sparse,
-  blob-filtered `git` fetch of just that directory, first over HTTPS, then over
-  SSH (`git@github.com`, needs a GitHub SSH key). Other options:
+- **Unreliable networks.** Fetching tries one `codeload.github.com` tarball
+  first, then the GitHub Trees API plus per-file `raw.githubusercontent.com`
+  downloads, then a sparse, blob-filtered `git` fetch of just that directory,
+  first over HTTPS, then over SSH (`git@github.com`, needs a GitHub SSH key).
+  Other options:
+  - `ASSETX_FETCH` or `--fetch` on `aa-cook-assets` / example scripts:
+    `auto` (default), `tarball`, `http`, or `git` (`raw` aliases `http`).
+    Explicit modes do not fall back to other strategies.
   - `HTTPS_PROXY=http://host:port` is honored by the HTTP path and by git over HTTPS.
   - Offline: copy `~/.cache/assetx/vendor/<owner>__<repo>__<sha>/` from a
     machine that has it (a directory with `.assetx_fetch.json` counts as
@@ -321,7 +319,7 @@ Never point factories at `artifacts/`; it is a mutable build dir.
 
 | Path | Role |
 |------|------|
-| `assetx` / `assetx.core` | MJCF assemble, transforms, builders, preview |
+| `assetx` / `assetx.core` | MJCF assemble, transforms, preview |
 | `assetx.conversion` | MJCF ↔ URDF, USD helpers |
 | `assetx.fetch` | Sparse GitHub directory download for vendor MJCF |
 | `assetx.recipes` | Registered recipes with pinned vendors (`@recipe`) |

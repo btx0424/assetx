@@ -13,9 +13,8 @@ from assetx import (
     RemoveSensors,
     RenameBodies,
     assemble,
-    asset_builder,
 )
-from assetx.fetch import download_github_dir
+from assetx.fetch import download_github_dir, add_fetch_argument, fetch_method_from_args
 
 _ARTIFACTS = Path("artifacts")
 _VENDOR = _ARTIFACTS / "vendor"
@@ -31,7 +30,6 @@ KINOVA_GITHUB = (
 KINOVA_FILE = "gen3.xml"
 
 
-@asset_builder
 def load_b2(xml_path: str | Path) -> MujocoAsset:
     asset = MujocoAsset.from_file(xml_path)
     # sensors and actuators should be added by downstream applications
@@ -43,14 +41,12 @@ def load_b2(xml_path: str | Path) -> MujocoAsset:
     return transform.transform(asset)
 
 
-@asset_builder
 def load_kinova(xml_path: str | Path) -> MujocoAsset:
     asset = MujocoAsset.from_file(xml_path)
     transform = RemoveActuators(names=[".*"])
     return transform.transform(asset)
 
 
-@asset_builder
 def build_b2_kinova(base: MujocoAsset, arm: MujocoAsset) -> MujocoAsset:
     """Mount Kinova Gen3 on B2 ``base_link``."""
     asset = assemble(
@@ -95,6 +91,7 @@ def _resolve_mjcf(
     vendor_dirname: str,
     relative_xml: str,
     force_download: bool,
+    fetch_method: str | None = None,
 ) -> Path:
     if local is not None:
         path = local.expanduser().resolve()
@@ -108,7 +105,7 @@ def _resolve_mjcf(
         print(f"Using cached vendor asset: {dest}")
     else:
         print(f"Fetching {github_url} -> {dest}")
-    download_github_dir(github_url, dest, force=force_download)
+    download_github_dir(github_url, dest, force=force_download, method=fetch_method)
 
     xml_path = dest / relative_xml
     if not xml_path.is_file():
@@ -153,7 +150,9 @@ def main() -> None:
         action="store_true",
         help="Skip the MuJoCo viewer after export.",
     )
+    add_fetch_argument(parser)
     args = parser.parse_args()
+    fetch_method = fetch_method_from_args(args)
 
     b2_xml = _resolve_mjcf(
         args.b2,
@@ -161,6 +160,7 @@ def main() -> None:
         vendor_dirname="b2_description_mujoco",
         relative_xml=B2_FILE,
         force_download=args.force_download,
+        fetch_method=fetch_method,
     )
     kinova_xml = _resolve_mjcf(
         args.kinova,
@@ -168,6 +168,7 @@ def main() -> None:
         vendor_dirname="kinova_gen3",
         relative_xml=KINOVA_FILE,
         force_download=args.force_download,
+        fetch_method=fetch_method,
     )
     print(f"Using B2: {b2_xml}")
     print(f"Using Kinova: {kinova_xml}")

@@ -10,7 +10,6 @@ from assetx import (
     Compose,
     MujocoAsset,
     SelectSubtree,
-    asset_builder,
     launch_preview,
 )
 
@@ -61,7 +60,6 @@ def _capsule_groups(geom_names: list[str]) -> tuple[list[list[str]], list[str]]:
     return groups, names
 
 
-@asset_builder
 def build_g1_inspire_finger_capsules(
     base: MujocoAsset,
     *,

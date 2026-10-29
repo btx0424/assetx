@@ -15,9 +15,8 @@ from assetx import (
     RenameBodies,
     ReplaceCylinderWithCapsule,
     assemble,
-    asset_builder,
 )
-from assetx.fetch import download_github_dir
+from assetx.fetch import download_github_dir, add_fetch_argument, fetch_method_from_args
 
 _ARTIFACTS = Path("artifacts")
 _VENDOR = _ARTIFACTS / "vendor"
@@ -34,7 +33,6 @@ PIPER_GITHUB = (
 PIPER_FILE = "piper.xml"
 
 
-@asset_builder
 def load_a2(xml_path: str | Path) -> MujocoAsset:
     asset = MujocoAsset.from_file(xml_path)
     # sensors and actuators should be added by downstream applications
@@ -45,14 +43,12 @@ def load_a2(xml_path: str | Path) -> MujocoAsset:
     ])
     return transform.transform(asset)
 
-@asset_builder
 def load_piper(xml_path: str | Path) -> MujocoAsset:
     asset = MujocoAsset.from_file(xml_path)
     transform = RemoveActuators(names=[".*"])
     return transform.transform(asset)
 
 
-@asset_builder
 def build_a2_piper(base: MujocoAsset, arm: MujocoAsset) -> MujocoAsset:
     asset = assemble(
         parent=base,
@@ -98,6 +94,7 @@ def _resolve_mjcf(
     vendor_dirname: str,
     relative_xml: str,
     force_download: bool,
+    fetch_method: str | None = None,
 ) -> Path:
     if local is not None:
         path = local.expanduser().resolve()
@@ -111,7 +108,7 @@ def _resolve_mjcf(
         print(f"Using cached vendor asset: {dest}")
     else:
         print(f"Fetching {github_url} -> {dest}")
-    download_github_dir(github_url, dest, force=force_download)
+    download_github_dir(github_url, dest, force=force_download, method=fetch_method)
 
     xml_path = dest / relative_xml
     if not xml_path.is_file():
@@ -156,7 +153,9 @@ def main() -> None:
         action="store_true",
         help="Skip the MuJoCo viewer after export.",
     )
+    add_fetch_argument(parser)
     args = parser.parse_args()
+    fetch_method = fetch_method_from_args(args)
 
     a2_xml = _resolve_mjcf(
         args.a2,
@@ -164,6 +163,7 @@ def main() -> None:
         vendor_dirname="a2_description",
         relative_xml=A2_FILE,
         force_download=args.force_download,
+        fetch_method=fetch_method,
     )
     piper_xml = _resolve_mjcf(
         args.piper,
@@ -171,6 +171,7 @@ def main() -> None:
         vendor_dirname="agilex_piper",
         relative_xml=PIPER_FILE,
         force_download=args.force_download,
+        fetch_method=fetch_method,
     )
     print(f"Using A2: {a2_xml}")
     print(f"Using Piper: {piper_xml}")

@@ -13,7 +13,6 @@ from assetx import (
     RemoveGeoms,
     ApproximateWithAABB,
     assemble,
-    asset_builder,
 )
 
 
@@ -22,17 +21,14 @@ DEFAULT_ROV = _REPO_ROOT / "aa-projects/aa-robot-models/underwater/BlueROVHeavy.
 DEFAULT_ARX = _REPO_ROOT / "reference/ARX_Model/X5/X5A/urdf/X5A.xml"
 
 
-@asset_builder
 def load_rov(xml_path: str | Path) -> MujocoAsset:
     return MujocoAsset.from_file(xml_path)
 
 
-@asset_builder
 def load_arx(xml_path: str | Path) -> MujocoAsset:
     return MujocoAsset.from_file(xml_path)
 
 
-@asset_builder
 def build_rov_arx(base: MujocoAsset, arm: MujocoAsset) -> MujocoAsset:
     """Mount ARX X5A on BlueROVHeavy ``base_link``.
 

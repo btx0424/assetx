@@ -8,12 +8,18 @@ import os
 import re
 import shutil
 import subprocess
+import sys
+import tarfile
 import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
+
+FetchMethod = Literal["auto", "tarball", "http", "git"]
+FETCH_METHOD_CHOICES: tuple[FetchMethod, ...] = ("auto", "tarball", "http", "git")
 
 _GITHUB_TREE_URL = re.compile(
     r"^https?://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)"
@@ -21,6 +27,8 @@ _GITHUB_TREE_URL = re.compile(
 )
 _USER_AGENT = "assetx-fetch/0.1"
 _HTTP_TIMEOUT = 30.0
+_TARBALL_TIMEOUT = 600.0
+_FETCH_ERRORS = (OSError, http.client.HTTPException, RuntimeError, urllib.error.URLError)
 
 
 @dataclass(frozen=True)
@@ -64,6 +72,47 @@ def parse_github_dir_url(url: str) -> GitHubDirRef:
     )
 
 
+def parse_fetch_method(value: str | None) -> FetchMethod:
+    """Parse ``ASSETX_FETCH`` / ``--fetch`` (``raw`` is an alias for ``http``)."""
+    if value is None or not str(value).strip():
+        return "auto"
+    normalized = str(value).strip().lower()
+    if normalized == "raw":
+        normalized = "http"
+    if normalized not in FETCH_METHOD_CHOICES:
+        raise ValueError(
+            f"Invalid fetch method {value!r}; use one of {', '.join(FETCH_METHOD_CHOICES)} "
+            "(http accepts alias 'raw')"
+        )
+    return normalized  # type: ignore[return-value]
+
+
+def resolve_fetch_method(method: str | FetchMethod | None = None) -> FetchMethod:
+    """Return explicit ``method``, else ``$ASSETX_FETCH``, else ``auto``."""
+    if method is not None:
+        return parse_fetch_method(method) if isinstance(method, str) else method
+    return parse_fetch_method(os.environ.get("ASSETX_FETCH"))
+
+
+def add_fetch_argument(parser) -> None:
+    """Register ``--fetch`` on an :mod:`argparse` parser (assetx examples)."""
+    parser.add_argument(
+        "--fetch",
+        choices=FETCH_METHOD_CHOICES,
+        default=None,
+        metavar="METHOD",
+        help=(
+            "Vendor download: auto (tarball, then http+raw, then git), tarball, "
+            "http, or git. Default: $ASSETX_FETCH or auto."
+        ),
+    )
+
+
+def fetch_method_from_args(args) -> FetchMethod | None:
+    """Return ``None`` when the CLI left the default (use env / auto)."""
+    return getattr(args, "fetch", None)
+
+
 def _http_get_json(url: str) -> object:
     request = urllib.request.Request(
         url,
@@ -82,10 +131,10 @@ def _http_get_json(url: str) -> object:
         ) from exc
 
 
-def _http_download(url: str, dest: Path) -> None:
+def _http_download(url: str, dest: Path, *, timeout: float = _HTTP_TIMEOUT) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-    with urllib.request.urlopen(request, timeout=_HTTP_TIMEOUT) as response, dest.open("wb") as out:
+    with urllib.request.urlopen(request, timeout=timeout) as response, dest.open("wb") as out:
         shutil.copyfileobj(response, out)
 
 
@@ -133,40 +182,30 @@ def download_github_dir(
     dest: str | Path,
     *,
     force: bool = False,
+    method: str | FetchMethod | None = None,
 ) -> Path:
     """Download only one GitHub directory into ``dest`` (no git history).
 
     ``source`` may be a :class:`GitHubDirRef` or a directory URL such as
     ``https://github.com/unitreerobotics/unitree_ros/tree/master/robots/a2_description``.
 
-    Uses one recursive Trees API listing, then downloads each blob from
-    ``raw.githubusercontent.com``. If that fails (network resets, timeouts,
-    API rate limits), falls back to a sparse, blob-filtered ``git`` fetch of
-    just that directory, over HTTPS and then SSH. Skips work when ``dest``
-    already contains files unless ``force=True``.
+    ``method`` / ``$ASSETX_FETCH`` selects the strategy:
+
+    - ``auto`` (default): tarball, then HTTP+raw, then git
+    - ``tarball``, ``http``, ``git``: that method only (no fallback)
+
+    Skips work when ``dest`` already contains files unless ``force=True``.
     """
     ref = parse_github_dir_url(source) if isinstance(source, str) else source
     dest_path = Path(dest)
     if dest_path.exists() and any(dest_path.rglob("*")) and not force:
         return dest_path
 
+    fetch_method = resolve_fetch_method(method)
     try:
-        files = _download_http(ref, dest_path)
-        method = "http"
+        files, used_method = _fetch_vendor_dir(ref, dest_path, fetch_method)
     except FileNotFoundError:
         raise
-    except (OSError, http.client.HTTPException, RuntimeError) as http_exc:
-        print(f"HTTP download failed ({http_exc}); falling back to git")
-        try:
-            files = _download_git(ref, dest_path)
-        except RuntimeError as git_exc:
-            raise RuntimeError(
-                f"Could not fetch {ref.page_url()}.\n"
-                f"  HTTP: {http_exc}\n  git: {git_exc}\n"
-                "Set HTTPS_PROXY (used by both), or copy the vendor directory "
-                "from a machine that has it."
-            ) from git_exc
-        method = "git"
 
     meta = {
         "source": ref.page_url(),
@@ -175,7 +214,7 @@ def download_github_dir(
         "ref": ref.ref,
         "path": ref.path,
         "files": files,
-        "method": method,
+        "method": used_method,
     }
     (dest_path / ".assetx_fetch.json").write_text(
         json.dumps(meta, indent=2) + "\n", encoding="utf-8"
@@ -183,10 +222,99 @@ def download_github_dir(
     return dest_path
 
 
+def _fetch_vendor_dir(ref: GitHubDirRef, dest: Path, method: FetchMethod) -> tuple[int, str]:
+    if method == "tarball":
+        return _download_tarball(ref, dest), "tarball"
+    if method == "http":
+        return _download_http(ref, dest), "http"
+    if method == "git":
+        return _download_git(ref, dest), "git"
+
+    tarball_exc: BaseException | None = None
+    http_exc: BaseException | None = None
+    try:
+        return _download_tarball(ref, dest), "tarball"
+    except FileNotFoundError:
+        raise
+    except _FETCH_ERRORS as exc:
+        tarball_exc = exc
+        print(f"Tarball download failed ({exc}); falling back to HTTP+raw")
+        try:
+            return _download_http(ref, dest), "http"
+        except FileNotFoundError:
+            raise
+        except _FETCH_ERRORS as exc2:
+            http_exc = exc2
+            print(f"HTTP download failed ({exc2}); falling back to git")
+            try:
+                return _download_git(ref, dest), "git"
+            except RuntimeError as git_exc:
+                raise RuntimeError(
+                    f"Could not fetch {ref.page_url()}.\n"
+                    f"  tarball: {tarball_exc}\n"
+                    f"  HTTP: {http_exc}\n"
+                    f"  git: {git_exc}\n"
+                    "Set HTTPS_PROXY (used by all methods), or copy the vendor directory "
+                    "from a machine that has it."
+                ) from git_exc
+
+
 def _reset_dir(path: Path) -> None:
     if path.exists():
         shutil.rmtree(path)
     path.mkdir(parents=True, exist_ok=True)
+
+
+def _codeload_tarball_url(ref: GitHubDirRef) -> str:
+    ref_part = urllib.parse.quote(ref.ref, safe="")
+    return f"https://codeload.github.com/{ref.owner}/{ref.repo}/tar.gz/{ref_part}"
+
+
+def _copy_tree_files(src: Path, dest: Path) -> int:
+    count = 0
+    for path in sorted(src.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(src)
+        (dest / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, dest / rel)
+        count += 1
+    return count
+
+
+def _download_tarball(ref: GitHubDirRef, dest: Path) -> int:
+    _reset_dir(dest)
+    prefix = ref.path.strip("/")
+    url = _codeload_tarball_url(ref)
+    with tempfile.TemporaryDirectory(prefix="assetx-tarball-") as tmp:
+        tmp_path = Path(tmp)
+        archive = tmp_path / "archive.tar.gz"
+        _http_download(url, archive, timeout=_TARBALL_TIMEOUT)
+        extract_root = tmp_path / "extract"
+        extract_root.mkdir()
+        with tarfile.open(archive, "r:gz") as tar:
+            if sys.version_info >= (3, 12):
+                tar.extractall(extract_root, filter="data")
+            else:
+                tar.extractall(extract_root)
+        roots = [p for p in extract_root.iterdir() if p.is_dir()]
+        if len(roots) != 1:
+            raise RuntimeError(
+                f"Expected one top-level directory in {url}, got {[p.name for p in roots]}"
+            )
+        repo_root = roots[0]
+        src = repo_root / prefix if prefix else repo_root
+        if prefix and not src.is_dir():
+            raise FileNotFoundError(
+                f"No directory {prefix!r} in {ref.owner}/{ref.repo}@{ref.ref}"
+            )
+        count = _copy_tree_files(src, dest)
+        if count == 0:
+            raise FileNotFoundError(
+                f"No files found under {ref.page_url()} "
+                f"({ref.owner}/{ref.repo}@{ref.ref}:{prefix or '/'})"
+            )
+        return count
 
 
 def _download_http(ref: GitHubDirRef, dest: Path) -> int:
@@ -245,5 +373,10 @@ def _download_git(ref: GitHubDirRef, dest: Path) -> int:
                 (dest / rel).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(path, dest / rel)
                 count += 1
+            if count == 0:
+                raise FileNotFoundError(
+                    f"No files found under {ref.page_url()} "
+                    f"({ref.owner}/{ref.repo}@{ref.ref}:{prefix or '/'})"
+                )
             return count
     raise RuntimeError("; ".join(errors))
