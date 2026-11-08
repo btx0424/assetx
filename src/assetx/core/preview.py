@@ -238,15 +238,66 @@ def _geom_rgba_u8(model: mujoco.MjModel, geom_id: int) -> tuple[int, int, int, f
     return rgb[0], rgb[1], rgb[2], alpha
 
 
-def _mesh_trimesh(model: mujoco.MjModel, mesh_id: int) -> trimesh.Trimesh:
+def _mesh_vertices(model: mujoco.MjModel, mesh_id: int) -> np.ndarray:
+    """Mesh vertices in the geom-local frame (scaled like MuJoCo's mesh asset)."""
     vadr = int(model.mesh_vertadr[mesh_id])
     vnum = int(model.mesh_vertnum[mesh_id])
+    vertices = np.asarray(model.mesh_vert[vadr : vadr + vnum], dtype=float)
+    return vertices * np.asarray(model.mesh_scale[mesh_id], dtype=float)
+
+
+def _mesh_trimesh(model: mujoco.MjModel, mesh_id: int) -> trimesh.Trimesh:
     fadr = int(model.mesh_faceadr[mesh_id])
     fnum = int(model.mesh_facenum[mesh_id])
-    vertices = np.asarray(model.mesh_vert[vadr : vadr + vnum], dtype=float)
-    vertices = vertices * np.asarray(model.mesh_scale[mesh_id], dtype=float)
     faces = np.asarray(model.mesh_face[fadr : fadr + fnum], dtype=int)
-    return trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+    return trimesh.Trimesh(
+        vertices=_mesh_vertices(model, mesh_id), faces=faces, process=False
+    )
+
+
+def _mesh_convex_hull_trimesh(
+    model: mujoco.MjModel, mesh_id: int
+) -> trimesh.Trimesh | None:
+    """MuJoCo's compiled convex hull for ``mesh_id``, fan-triangulated.
+
+    Mesh–mesh contacts use these hull polygons, not the visual surface faces.
+    """
+    pnum = int(model.mesh_polynum[mesh_id])
+    if pnum <= 0:
+        return None
+    vertices = _mesh_vertices(model, mesh_id)
+    padr = int(model.mesh_polyadr[mesh_id])
+    faces: list[list[int]] = []
+    for i in range(pnum):
+        pvadr = int(model.mesh_polyvertadr[padr + i])
+        pvnum = int(model.mesh_polyvertnum[padr + i])
+        if pvnum < 3:
+            continue
+        idxs = np.asarray(model.mesh_polyvert[pvadr : pvadr + pvnum], dtype=int)
+        for k in range(1, pvnum - 1):
+            faces.append([int(idxs[0]), int(idxs[k]), int(idxs[k + 1])])
+    if not faces:
+        return None
+    return trimesh.Trimesh(
+        vertices=vertices, faces=np.asarray(faces, dtype=int), process=False
+    )
+
+
+def _geom_collision_hull_trimesh(
+    model: mujoco.MjModel, geom_id: int
+) -> trimesh.Trimesh | None:
+    """Convex hull overlay for a collision mesh geom, else ``None``.
+
+    Primitive collision geoms are already convex, so they need no separate hull.
+    """
+    if not _is_collision_geom(model, geom_id):
+        return None
+    if int(model.geom_type[geom_id]) != int(mujoco.mjtGeom.mjGEOM_MESH):
+        return None
+    mesh_id = int(model.geom_dataid[geom_id])
+    if mesh_id < 0:
+        return None
+    return _mesh_convex_hull_trimesh(model, mesh_id)
 
 
 def _geom_local_trimesh(model: mujoco.MjModel, geom_id: int) -> trimesh.Trimesh | None:
@@ -311,11 +362,15 @@ def _launch_mujoco_preview(model: mujoco.MjModel, data: mujoco.MjData) -> None:
             viewer.sync()
 
 
+_HULL_COLOR = (0, 220, 255)
+
+
 def _launch_viser_preview(
     model: mujoco.MjModel,
     data: mujoco.MjData,
     *,
     port: int,
+    convex_hulls: bool = False,
 ) -> None:
     import viser
 
@@ -327,6 +382,7 @@ def _launch_viser_preview(
     server.scene.add_grid("/ground", width=4.0, height=4.0, cell_size=0.25)
 
     geom_nodes: list[_ViserGeom] = []
+    hull_nodes: list[_ViserGeom] = []
     for gid in range(model.ngeom):
         local = _geom_local_trimesh(model, gid)
         if local is None or local.vertices.size == 0:
@@ -341,6 +397,10 @@ def _launch_viser_preview(
         # Collision-only geoms: slightly transparent so visuals stay readable.
         opacity = min(alpha, 0.35) if is_collision and alpha >= 0.99 else alpha
         opacity_arg = None if opacity >= 0.999 else max(opacity, 0.05)
+        pose_kwargs = {
+            "position": np.asarray(data.geom_xpos[gid], dtype=float),
+            "wxyz": _geom_wxyz(data, gid),
+        }
 
         handle = server.scene.add_mesh_simple(
             f"/robot/{body_name}/{name}",
@@ -348,10 +408,25 @@ def _launch_viser_preview(
             faces=np.asarray(local.faces, dtype=np.int32),
             color=(r, g, b),
             opacity=opacity_arg,
-            position=np.asarray(data.geom_xpos[gid], dtype=float),
-            wxyz=_geom_wxyz(data, gid),
+            **pose_kwargs,
         )
         geom_nodes.append(_ViserGeom(geom_id=gid, handle=handle, is_collision=is_collision))
+
+        hull = _geom_collision_hull_trimesh(model, gid)
+        if hull is None or hull.vertices.size == 0 or hull.faces.size == 0:
+            continue
+        hull_handle = server.scene.add_mesh_simple(
+            f"/hulls/{body_name}/{name}",
+            vertices=np.asarray(hull.vertices, dtype=np.float32),
+            faces=np.asarray(hull.faces, dtype=np.int32),
+            color=_HULL_COLOR,
+            wireframe=True,
+            visible=convex_hulls,
+            **pose_kwargs,
+        )
+        hull_nodes.append(
+            _ViserGeom(geom_id=gid, handle=hull_handle, is_collision=True)
+        )
 
     axes_length = 0.08 * float(model.stat.extent)
     frame_style = {
@@ -402,6 +477,11 @@ def _launch_viser_preview(
             sliders[joint.name] = slider
 
     show_collision = server.gui.add_checkbox("Show collision geoms", initial_value=True)
+    show_hulls = server.gui.add_checkbox(
+        "Show collision convex hulls",
+        initial_value=convex_hulls,
+        hint="MuJoCo mesh–mesh contact hulls (wireframe); primitives are already convex",
+    )
     show_link = server.gui.add_checkbox(
         "Show link frames", initial_value=False, hint="Body frames (yellow origin)"
     )
@@ -418,6 +498,12 @@ def _launch_viser_preview(
         for node in geom_nodes:
             if node.is_collision:
                 node.handle.visible = visible
+
+    @show_hulls.on_update
+    def _toggle_hulls(_event: Any) -> None:
+        visible = bool(show_hulls.value)
+        for node in hull_nodes:
+            node.handle.visible = visible
 
     def _bind_frame_toggle(checkbox: Any, kind: str) -> None:
         @checkbox.on_update
@@ -448,6 +534,9 @@ def _launch_viser_preview(
         for node in geom_nodes:
             node.handle.position = np.asarray(data.geom_xpos[node.geom_id], dtype=float)
             node.handle.wxyz = _geom_wxyz(data, node.geom_id)
+        for node in hull_nodes:
+            node.handle.position = np.asarray(data.geom_xpos[node.geom_id], dtype=float)
+            node.handle.wxyz = _geom_wxyz(data, node.geom_id)
         for kind, nodes in frame_nodes.items():
             for body_id, handle in nodes:
                 pos, wxyz = _body_frame_pose(data, body_id, kind)  # type: ignore[arg-type]
@@ -475,6 +564,7 @@ def launch_preview(
     float_clearance: float = _DEFAULT_FLOAT_CLEARANCE,
     viewer: Literal["mujoco", "viser"] = "mujoco",
     port: int = _DEFAULT_VISER_PORT,
+    convex_hulls: bool = False,
 ) -> None:
     """Open an interactive preview with optional ground and lighting.
 
@@ -491,6 +581,9 @@ def launch_preview(
         posing / inspecting articulation).
     port:
         Viser HTTP port when ``viewer="viser"``.
+    convex_hulls:
+        When ``viewer="viser"``, start with MuJoCo collision-mesh convex hull
+        wireframes visible (also togglable in the GUI).
     """
     if float_clearance < 0.0:
         raise ValueError(f"float_clearance must be >= 0, got {float_clearance}")
@@ -504,7 +597,9 @@ def launch_preview(
         _float_above_ground(model, data, clearance=float_clearance)
 
     if viewer == "viser":
-        _launch_viser_preview(model, data, port=port)
+        _launch_viser_preview(
+            model, data, port=port, convex_hulls=convex_hulls
+        )
     else:
         _launch_mujoco_preview(model, data)
 

@@ -58,6 +58,22 @@ def main() -> None:
         help="Write model.xml and meshes here.",
     )
     parser.add_argument("--no-viewer", action="store_true", help="Disable the viewer.")
+    parser.add_argument(
+        "--viser",
+        action="store_true",
+        help="Use the Viser browser preview instead of the MuJoCo viewer.",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8080,
+        help="Viser HTTP port when --viser is set (default: 8080).",
+    )
+    parser.add_argument(
+        "--convex-hulls",
+        action="store_true",
+        help="With --viser, show MuJoCo collision-mesh convex hull wireframes.",
+    )
     add_fetch_argument(parser)
     args = parser.parse_args()
 
@@ -70,7 +86,12 @@ def main() -> None:
     if args.no_viewer:
         return
 
-    launch_preview(robot)
+    launch_preview(
+        robot,
+        viewer="viser" if args.viser else "mujoco",
+        port=args.port,
+        convex_hulls=args.convex_hulls,
+    )
 
 
 if __name__ == "__main__":

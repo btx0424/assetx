@@ -174,6 +174,7 @@ local paths are omitted. These are one-off scripts; move a robot into
 | [`examples/b2z1.py`](examples/b2z1.py) | B2-Z1 cleanup / merge recipe | `uv run examples/b2z1.py --help` |
 | [`examples/rov_arx.py`](examples/rov_arx.py) | BlueROV + ARX X5A (lab paths) | `uv run examples/rov_arx.py --help` |
 | [`examples/g1_inspire_hand.py`](examples/g1_inspire_hand.py) | G1 Inspire finger capsule approx. | `uv run examples/g1_inspire_hand.py --help` |
+| [`examples/rebot_arm.py`](examples/rebot_arm.py) | Seeed reBot B601 DevArm (colored MJCF) | `uv run examples/rebot_arm.py` |
 
 Typical flags (A2 + Piper):
 

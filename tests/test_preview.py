@@ -10,8 +10,10 @@ import pytest
 from assetx.core.preview import (
     _body_frame_pose,
     _float_above_ground,
+    _geom_collision_hull_trimesh,
     _geom_rgba_u8,
     _lowest_non_plane_z,
+    _mesh_convex_hull_trimesh,
     apply_rig_joint_values,
     compile_for_preview,
     list_rig_joints,
@@ -148,3 +150,49 @@ def test_geom_rgba_prefers_material() -> None:
 
     assert _geom_rgba_u8(model, 0) == (255, 0, 0, 1.0)
     assert _geom_rgba_u8(model, 1) == (0, 0, 255, 0.5)
+
+
+def test_mesh_convex_hull_drops_interior_vertices() -> None:
+    """MuJoCo hull polygons omit concave/interior verts used by contact."""
+    xml = """
+    <mujoco>
+      <asset>
+        <mesh name="dent" vertex="
+          0 0 0  1 0 0  1 1 0  0 1 0
+          0 0 1  1 0 1  1 1 1  0 1 1
+          0.5 0.5 0.5
+        " face="
+          0 1 2  0 2 3
+          4 5 6  4 6 7
+          0 1 5  0 5 4
+          1 2 6  1 6 5
+          2 3 7  2 7 6
+          3 0 4  3 4 7
+        "/>
+      </asset>
+      <worldbody>
+        <body name="base">
+          <geom name="collision" type="mesh" mesh="dent"
+                contype="1" conaffinity="1"/>
+          <geom name="visual" type="mesh" mesh="dent"
+                contype="0" conaffinity="0"/>
+          <geom name="capsule" type="capsule" size="0.05 0.1"
+                contype="1" conaffinity="1"/>
+        </body>
+      </worldbody>
+    </mujoco>
+    """
+    model = mujoco.MjModel.from_xml_string(xml)
+    hull = _mesh_convex_hull_trimesh(model, 0)
+    assert hull is not None
+    # Interior sample is not a hull vertex; only the cube corners remain.
+    used = set(int(i) for i in hull.faces.reshape(-1))
+    assert 8 not in used
+    assert hull.faces.shape[0] >= 12
+
+    collision_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "collision")
+    visual_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "visual")
+    capsule_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "capsule")
+    assert _geom_collision_hull_trimesh(model, collision_id) is not None
+    assert _geom_collision_hull_trimesh(model, visual_id) is None
+    assert _geom_collision_hull_trimesh(model, capsule_id) is None
