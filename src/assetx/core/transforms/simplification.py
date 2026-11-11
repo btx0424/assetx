@@ -4,11 +4,13 @@ from dataclasses import dataclass, replace
 
 import mujoco
 import numpy as np
+import trimesh
 from scipy.spatial.transform import Rotation as sRot
 
 from assetx.core.asset import MujocoAsset
 from assetx.core.transforms._geom import (
     compile_asset_spec,
+    geom_hull_points_world,
     geom_points_world,
     points_in_body_frame,
 )
@@ -688,6 +690,236 @@ class ApproximateWithCapsule(Transform):
                 _copy_contact_attrs(capsule, template)
                 capsule.classname = template.classname
                 capsule.rgba = _default_approx_rgba(template, self.rgba)
+
+        spec.compile()
+        return replace(asset, spec=spec)
+
+
+def _is_visual_geom(geom: mujoco.MjsGeom) -> bool:
+    return int(geom.contype) == 0 and int(geom.conaffinity) == 0
+
+
+def _parse_scale_xyz(
+    size_scale: float | tuple[float, float, float],
+) -> tuple[float, float, float]:
+    if isinstance(size_scale, (int, float)):
+        scale = (float(size_scale),) * 3
+    else:
+        scale = tuple(float(x) for x in size_scale)
+        if len(scale) != 3:
+            raise ValueError("scale must be a float or a length-3 tuple")
+    if any(s <= 0.0 for s in scale):
+        raise ValueError(f"scale components must be > 0, got {scale}")
+    return scale
+
+
+def _sample_group_hull_points_in_body(
+    *,
+    label: str,
+    geom_names: list[str],
+    host_path: str,
+    model: mujoco.MjModel,
+    data: mujoco.MjData,
+) -> np.ndarray:
+    host_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, host_path)
+    if host_id < 0:
+        raise ValueError(f"{label}: compiled model missing body {host_path!r}")
+    body_xpos = np.asarray(data.xpos[host_id], dtype=float)
+    body_xmat = np.asarray(data.xmat[host_id], dtype=float).reshape(3, 3)
+
+    point_chunks: list[np.ndarray] = []
+    for name in geom_names:
+        gid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, name)
+        if gid < 0:
+            raise ValueError(f"{label}: compiled model missing geom {name!r}")
+        point_chunks.append(geom_hull_points_world(model, data, gid))
+    return points_in_body_frame(np.vstack(point_chunks), body_xpos, body_xmat)
+
+
+def _convex_hull_vertices_faces(
+    points: np.ndarray,
+    *,
+    scale: tuple[float, float, float],
+) -> tuple[np.ndarray, np.ndarray]:
+    pts = np.asarray(points, dtype=float)
+    if pts.ndim != 2 or pts.shape[1] != 3:
+        raise ValueError(f"points must have shape (N, 3), got {pts.shape}")
+    if pts.shape[0] < 4:
+        raise ValueError(f"convex hull needs at least 4 points, got {pts.shape[0]}")
+
+    hull = trimesh.convex.convex_hull(pts)
+    vertices = np.asarray(hull.vertices, dtype=np.float64)
+    faces = np.asarray(hull.faces, dtype=np.int32)
+    if vertices.shape[0] < 4 or faces.shape[0] < 4:
+        raise ValueError("convex hull produced a degenerate mesh")
+    centroid = vertices.mean(axis=0)
+    vertices = centroid + (vertices - centroid) * np.asarray(scale, dtype=np.float64)
+    return vertices, faces
+
+
+def _unique_mesh_name(spec: mujoco.MjSpec, base: str) -> str:
+    used = {mesh.name for mesh in spec.meshes if mesh.name}
+    if base not in used:
+        return base
+    index = 1
+    while f"{base}_{index}" in used:
+        index += 1
+    return f"{base}_{index}"
+
+
+def _apply_hull_contact_attrs(dst: mujoco.MjsGeom, template: mujoco.MjsGeom) -> None:
+    """Collision attrs: keep contact settings from a collision source, else enable contact."""
+    dst.friction = template.friction
+    dst.condim = template.condim
+    dst.classname = template.classname
+    dst.solref = template.solref
+    dst.solimp = template.solimp
+    dst.margin = template.margin
+    dst.gap = template.gap
+    # Explicit body inertial owns mass; hulls must not add density.
+    dst.density = 0
+    dst.mass = 0
+    if _is_visual_geom(template):
+        dst.contype = 1
+        dst.conaffinity = 1
+        dst.group = template.group
+    else:
+        dst.contype = template.contype
+        dst.conaffinity = template.conaffinity
+        dst.group = template.group
+
+
+class ApproximateWithConvexHull(Transform):
+    """Add a convex-hull collision mesh for each group of geoms.
+
+    Vertices from the named geoms are expressed in a host body frame at qpos0,
+    hulled, optionally scaled about the hull centroid, and added as an inline
+    ``<mesh>`` plus a collision geom at the body origin.
+
+    Visual-only sources are kept. Collision sources are deleted when
+    ``replace`` is True (the default), so this can both *add* hulls for
+    visual-only links and *replace* existing non-convex collision meshes.
+
+    Parameters
+    ----------
+    groups:
+        Each inner list is one hull: the named geoms it approximates.
+    names:
+        Optional collision geom names (defaults to ``{first}_collision``).
+    body_paths:
+        Optional host body for each group (defaults to the parent of the first
+        geom).
+    replace:
+        If True (default), delete source geoms that are already collision.
+    scale:
+        Uniform or per-axis multiplier applied about the hull centroid
+        (default 1.0). Use values < 1 when the raw hull is oversized.
+    rgba:
+        Collision geom color; defaults to the first geom's rgba with alpha 0.5.
+
+    Example
+    -------
+    ::
+
+        ApproximateWithConvexHull(
+            [["link2_anodized_grey_visual", "link2_hardware_black_visual"]],
+            names=["link2_collision0"],
+            body_paths=["link2"],
+            scale=0.9,
+        )
+    """
+
+    def __init__(
+        self,
+        groups: list[list[str]],
+        *,
+        names: list[str] | None = None,
+        body_paths: list[str | None] | None = None,
+        replace: bool = True,
+        scale: float | tuple[float, float, float] = 1.0,
+        rgba: tuple[float, float, float, float] | None = None,
+    ) -> None:
+        if not groups:
+            raise ValueError(
+                "ApproximateWithConvexHull requires at least one geom group"
+            )
+        for i, group in enumerate(groups):
+            if not group:
+                raise ValueError(f"ApproximateWithConvexHull: group {i} is empty")
+        self.groups = [list(g) for g in groups]
+        self.names = list(names) if names is not None else None
+        self.body_paths = list(body_paths) if body_paths is not None else None
+        self.replace = bool(replace)
+        self.scale = _parse_scale_xyz(scale)
+        self.rgba = rgba
+        if self.names is not None and len(self.names) != len(self.groups):
+            raise ValueError("names must have the same length as groups")
+        if self.body_paths is not None and len(self.body_paths) != len(self.groups):
+            raise ValueError("body_paths must have the same length as groups")
+
+    def transform(self, asset: MujocoAsset) -> MujocoAsset:
+        spec = asset.spec.copy()
+        geoms_by_name = {g.name: g for g in spec.geoms if g.name}
+        planned: list[
+            tuple[list[str], str, str, np.ndarray, np.ndarray, mujoco.MjsGeom]
+        ] = []
+
+        model = compile_asset_spec(asset, spec)
+        data = mujoco.MjData(model)
+        mujoco.mj_forward(model, data)
+
+        for group_idx, geom_names in enumerate(self.groups):
+            host_path, _, first_spec_geom = _resolve_group_host(
+                label="ApproximateWithConvexHull",
+                geom_names=geom_names,
+                geoms_by_name=geoms_by_name,
+                body_paths=self.body_paths,
+                group_idx=group_idx,
+                spec=spec,
+            )
+            points_body = _sample_group_hull_points_in_body(
+                label="ApproximateWithConvexHull",
+                geom_names=geom_names,
+                host_path=host_path,
+                model=model,
+                data=data,
+            )
+            vertices, faces = _convex_hull_vertices_faces(
+                points_body, scale=self.scale
+            )
+            hull_name = (
+                self.names[group_idx]
+                if self.names is not None
+                else f"{geom_names[0]}_collision"
+            )
+            planned.append(
+                (geom_names, hull_name, host_path, vertices, faces, first_spec_geom)
+            )
+
+        for geom_names, hull_name, host_path, vertices, faces, template in planned:
+            if self.replace:
+                for name in geom_names:
+                    geom = geoms_by_name.get(name)
+                    if geom is not None and not _is_visual_geom(geom):
+                        spec.delete(geom)
+                        geoms_by_name.pop(name, None)
+
+            mesh = spec.add_mesh()
+            mesh.name = _unique_mesh_name(spec, f"{hull_name}_mesh")
+            mesh.uservert = np.asarray(vertices, dtype=np.float64).ravel()
+            mesh.userface = np.asarray(faces, dtype=np.int32).ravel()
+
+            host_body = spec.body(host_path)
+            assert host_body is not None
+            hull = host_body.add_geom()
+            hull.name = hull_name
+            hull.type = mujoco.mjtGeom.mjGEOM_MESH
+            hull.meshname = mesh.name
+            hull.pos = (0.0, 0.0, 0.0)
+            hull.quat = (1.0, 0.0, 0.0, 0.0)
+            _apply_hull_contact_attrs(hull, template)
+            hull.rgba = _default_approx_rgba(template, self.rgba)
+            geoms_by_name[hull_name] = hull
 
         spec.compile()
         return replace(asset, spec=spec)

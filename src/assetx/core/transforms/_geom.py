@@ -101,6 +101,27 @@ def geom_points_world(model: mujoco.MjModel, data: mujoco.MjData, geom_id: int) 
     return (xmat @ local.T).T + xpos
 
 
+def geom_hull_points_world(
+    model: mujoco.MjModel, data: mujoco.MjData, geom_id: int
+) -> np.ndarray:
+    """Geom vertices in world frame, for convex-hull construction.
+
+    Mesh geoms use mesh vertices (not surface samples) so the hull is exact
+    with respect to the compiled mesh. Primitives reuse the same local
+    samples as :func:`geom_points_world`.
+    """
+    gtype = int(model.geom_type[geom_id])
+    xpos = np.asarray(data.geom_xpos[geom_id], dtype=float)
+    xmat = np.asarray(data.geom_xmat[geom_id], dtype=float).reshape(3, 3)
+    if gtype == int(mujoco.mjtGeom.mjGEOM_MESH):
+        mesh_id = int(model.geom_dataid[geom_id])
+        if mesh_id < 0:
+            raise ValueError(f"geom {geom_id} is MESH but has no mesh id")
+        local = mesh_vertices_local(model, mesh_id)
+        return (xmat @ local.T).T + xpos
+    return geom_points_world(model, data, geom_id)
+
+
 def points_in_body_frame(
     points_world: np.ndarray,
     body_xpos: np.ndarray,

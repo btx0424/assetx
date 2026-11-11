@@ -14,6 +14,7 @@ import mujoco
 
 from assetx import (
     AddDummyBody,
+    ApproximateWithConvexHull,
     Compose,
     MujocoAsset,
     NormalizeGeomNames,
@@ -37,6 +38,47 @@ REBOT_ARM_MJCF = Path("mjcf") / "rebotarm_b601_colored.xml"
 
 # Vendor ``tcp`` site on ``end_link`` (parent-relative).
 _TCP_POS = (-0.105, 0.0, 0.0)
+
+# Colored visual pieces per arm body (gripper already has collision meshes).
+_ARM_LINK_VISUALS: dict[str, tuple[str, ...]] = {
+    "base_link": (
+        "base_link_hardware_black_visual",
+        "base_link_matte_black_visual",
+        "base_link_silver_trim_visual",
+    ),
+    "link1": (
+        "link1_anodized_grey_visual",
+        "link1_hardware_black_visual",
+        "link1_matte_black_visual",
+    ),
+    "link2": (
+        "link2_anodized_grey_visual",
+        "link2_hardware_black_visual",
+        "link2_matte_black_visual",
+        "link2_seeed_yellow_visual",
+    ),
+    "link3": (
+        "link3_anodized_grey_visual",
+        "link3_hardware_black_visual",
+        "link3_matte_black_visual",
+        "link3_seeed_yellow_visual",
+    ),
+    "link4": (
+        "link4_anodized_grey_visual",
+        "link4_hardware_black_visual",
+        "link4_matte_black_visual",
+        "link4_seeed_yellow_visual",
+    ),
+    "link5": (
+        "link5_anodized_grey_visual",
+        "link5_hardware_black_visual",
+        "link5_matte_black_visual",
+    ),
+    "link6": (
+        "link6_hardware_black_visual",
+        "link6_matte_black_visual",
+    ),
+}
 
 _SCENE_BODY_NAMES = (
     "task_table",
@@ -94,6 +136,12 @@ def build_rebot_arm(vendor_dir: Path) -> MujocoAsset:
             RemoveSensors(names=[".*"]),
             RemoveActuators(names=[".*"]),
             RemoveSceneSettings(visual=True),
+            ApproximateWithConvexHull(
+                [list(names) for names in _ARM_LINK_VISUALS.values()],
+                names=[f"{body}_collision0" for body in _ARM_LINK_VISUALS],
+                body_paths=list(_ARM_LINK_VISUALS),
+                scale=0.9,
+            ),
             AddDummyBody(
                 parent_path="end_link",
                 name="grasp_point",
