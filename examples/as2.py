@@ -12,6 +12,7 @@ from assetx import (
     RemoveActuators,
     RemoveSceneSettings,
     RemoveSensors,
+    ReplaceCylinderWithCapsule,
     launch_preview,
 )
 from assetx.fetch import add_fetch_argument, fetch_method_from_args
@@ -45,6 +46,9 @@ def build_as2(vendor_dir: Path) -> MujocoAsset:
             GeomsToBody([collision, visual], f"{prefix}_foot", mass=0.05)
             for prefix, collision, visual in _FOOT_GEOM_GROUPS
         ),
+        # PhysX cylinder-vs-mesh contacts omit the triangle index and spam
+        # getMaterialFromInternalFaceIndex. Capsules keep the same size and axis.
+        ReplaceCylinderWithCapsule(),
     ])
     return transform.transform(asset)
 

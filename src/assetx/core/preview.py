@@ -363,6 +363,13 @@ def _launch_mujoco_preview(model: mujoco.MjModel, data: mujoco.MjData) -> None:
 
 
 _HULL_COLOR = (0, 220, 255)
+_DEFAULT_COLLISION_OPACITY = 0.5
+
+
+def _mesh_opacity(value: float) -> float | None:
+    """Viser treats ``None`` as fully opaque; clamp tiny values so meshes stay pickable."""
+    opacity = float(np.clip(value, 0.05, 1.0))
+    return None if opacity >= 0.999 else opacity
 
 
 def _launch_viser_preview(
@@ -394,9 +401,6 @@ def _launch_viser_preview(
         )
         r, g, b, alpha = _geom_rgba_u8(model, gid)
         is_collision = _is_collision_geom(model, gid)
-        # Collision-only geoms: slightly transparent so visuals stay readable.
-        opacity = min(alpha, 0.35) if is_collision and alpha >= 0.99 else alpha
-        opacity_arg = None if opacity >= 0.999 else max(opacity, 0.05)
         pose_kwargs = {
             "position": np.asarray(data.geom_xpos[gid], dtype=float),
             "wxyz": _geom_wxyz(data, gid),
@@ -407,7 +411,11 @@ def _launch_viser_preview(
             vertices=np.asarray(local.vertices, dtype=np.float32),
             faces=np.asarray(local.faces, dtype=np.int32),
             color=(r, g, b),
-            opacity=opacity_arg,
+            opacity=(
+                _mesh_opacity(_DEFAULT_COLLISION_OPACITY)
+                if is_collision
+                else _mesh_opacity(alpha)
+            ),
             **pose_kwargs,
         )
         geom_nodes.append(_ViserGeom(geom_id=gid, handle=handle, is_collision=is_collision))
@@ -477,6 +485,14 @@ def _launch_viser_preview(
             sliders[joint.name] = slider
 
     show_collision = server.gui.add_checkbox("Show collision geoms", initial_value=True)
+    collision_opacity = server.gui.add_slider(
+        "Collision opacity",
+        min=0.05,
+        max=1.0,
+        step=0.05,
+        initial_value=_DEFAULT_COLLISION_OPACITY,
+        hint="Opacity of collision meshes (visuals are unchanged)",
+    )
     show_hulls = server.gui.add_checkbox(
         "Show collision convex hulls",
         initial_value=convex_hulls,
@@ -492,12 +508,22 @@ def _launch_viser_preview(
     )
     reset_btn = server.gui.add_button("Reset qpos0")
 
+    def _apply_collision_opacity() -> None:
+        opacity = _mesh_opacity(float(collision_opacity.value))
+        for node in geom_nodes:
+            if node.is_collision:
+                node.handle.opacity = opacity
+
     @show_collision.on_update
     def _toggle_collision(_event: Any) -> None:
         visible = bool(show_collision.value)
         for node in geom_nodes:
             if node.is_collision:
                 node.handle.visible = visible
+
+    @collision_opacity.on_update
+    def _on_collision_opacity(_event: Any) -> None:
+        _apply_collision_opacity()
 
     @show_hulls.on_update
     def _toggle_hulls(_event: Any) -> None:
