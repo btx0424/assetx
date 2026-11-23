@@ -226,3 +226,38 @@ def test_spot_uleg_collision_is_one_capsule() -> None:
         assert float(geom.size[1]) > half_lo
     lip = arm.spec.geom("arm_link_el1_collision1")
     assert lip is not None and lip.type == mujoco.mjtGeom.mjGEOM_MESH
+
+
+def test_as2w_calf_collision_is_one_capsule() -> None:
+    import pytest
+
+    from assetx.fetch import parse_github_dir_url
+    from assetx.vendor import cache_dir
+
+    as2w = _load_assetx_example("as2w")
+    ref = parse_github_dir_url(as2w.UNITREE_AS2W)
+    vendor = cache_dir() / "vendor" / f"{ref.owner}__{ref.repo}__{ref.ref}" / ref.path
+    if not (vendor / as2w.AS2W_URDF).is_file():
+        pytest.skip(f"AS2W vendor asset not cached at {vendor}")
+
+    asset = as2w.build_as2w(vendor)
+    free = [
+        joint
+        for joint in asset.spec.joints
+        if joint.type == mujoco.mjtJoint.mjJNT_FREE
+    ]
+    assert [joint.name for joint in free] == ["floating_base_joint"]
+
+    for leg in ("FL", "FR", "RL", "RR"):
+        calf = asset.spec.geom(f"{leg}_calf_collision0")
+        assert calf is not None and calf.type == mujoco.mjtGeom.mjGEOM_CAPSULE
+        assert calf.group == 3
+        assert 0.03 < float(calf.size[0]) < 0.045
+        assert 0.08 < float(calf.size[1]) < 0.12
+        for part in ("thigh", "hip", "foot"):
+            geom = asset.spec.geom(f"{leg}_{part}_collision0")
+            assert geom is not None and geom.type == mujoco.mjtGeom.mjGEOM_MESH
+            assert geom.group == 3
+    for name in ("base_link_collision0", "JT128_collision0"):
+        geom = asset.spec.geom(name)
+        assert geom is not None and geom.type == mujoco.mjtGeom.mjGEOM_MESH
