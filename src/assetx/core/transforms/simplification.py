@@ -15,13 +15,54 @@ from assetx.core.transforms._geom import (
     points_in_body_frame,
 )
 from assetx.core.transforms.base import Transform
+from assetx.core.transforms.edit import _name_matches
 
 
 class ReplaceCylinderWithCapsule(Transform):
+    """Turn cylinder geoms into capsules of the same size and axis.
+
+    ``include`` and ``exclude`` are full-match regexes. A pattern hits when
+    either the geom name or the parent body name matches. An empty name does
+    not match, so an unnamed geom is selected only through its body, or when
+    ``include`` is omitted. A cylinder is converted when it matches ``include``
+    (or ``include`` is omitted) and does not match ``exclude``. The default
+    converts every cylinder.
+
+    Example
+    -------
+    ::
+
+        ReplaceCylinderWithCapsule(exclude=[".*_wheel"])
+    """
+
+    def __init__(
+        self,
+        *,
+        include: list[str] | None = None,
+        exclude: list[str] | None = None,
+    ) -> None:
+        self.include = list(include) if include is not None else None
+        self.exclude = list(exclude) if exclude is not None else None
+
+    def _selected(self, geom: mujoco.MjsGeom) -> bool:
+        names = [geom.name or ""]
+        parent = geom.parent
+        if parent is not None and parent.name:
+            names.append(parent.name)
+        if self.include is not None and not any(
+            _name_matches(name, self.include) for name in names
+        ):
+            return False
+        if self.exclude is not None and any(
+            _name_matches(name, self.exclude) for name in names
+        ):
+            return False
+        return True
+
     def transform(self, asset: MujocoAsset) -> MujocoAsset:
         spec = asset.spec.copy()
         for geom in spec.geoms:
-            if geom.type == mujoco.mjtGeom.mjGEOM_CYLINDER:
+            if geom.type == mujoco.mjtGeom.mjGEOM_CYLINDER and self._selected(geom):
                 geom.type = mujoco.mjtGeom.mjGEOM_CAPSULE
         return replace(asset, spec=spec)
 

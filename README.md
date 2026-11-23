@@ -171,6 +171,7 @@ local paths are omitted. These are one-off scripts; move a robot into
 | [`examples/a2_piper.py`](examples/a2_piper.py) | Unitree A2 + AgileX Piper | `uv run examples/a2_piper.py` |
 | [`examples/as2.py`](examples/as2.py) | Unitree AS2 | `uv run examples/as2.py` |
 | [`examples/as2w.py`](examples/as2w.py) | Unitree AS2W (URDF, calf capsules) | `uv run examples/as2w.py` |
+| [`examples/m20s.py`](examples/m20s.py) | Deep Robotics M20S wheeled quadruped | `uv run examples/m20s.py` |
 | [`examples/b2_kinova.py`](examples/b2_kinova.py) | Unitree B2 + Kinova Gen3 | `uv run examples/b2_kinova.py` |
 | [`examples/b2z1.py`](examples/b2z1.py) | B2-Z1 cleanup / merge recipe | `uv run examples/b2z1.py --help` |
 | [`examples/rov_arx.py`](examples/rov_arx.py) | BlueROV + ARX X5A (lab paths) | `uv run examples/rov_arx.py --help` |
