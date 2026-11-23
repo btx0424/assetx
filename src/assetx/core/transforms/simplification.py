@@ -85,6 +85,14 @@ class CapsuleFit:
     half_height: float  # cylindrical half-length (excludes hemispherical caps)
 
 
+@dataclass(frozen=True)
+class SphereFit:
+    """Sphere center and radius in a host body frame."""
+
+    pos: tuple[float, float, float]
+    radius: float
+
+
 def fit_aabb(points: np.ndarray) -> AABBFit:
     """Fit an axis-aligned bounding box in the same frame as ``points``."""
     pts = np.asarray(points, dtype=float)
@@ -101,6 +109,51 @@ def fit_aabb(points: np.ndarray) -> AABBFit:
         pos=tuple(float(x) for x in center),
         half_sizes=tuple(float(x) for x in half),
     )
+
+
+def fit_sphere(
+    points: np.ndarray,
+    *,
+    coverage_quantile: float = 1.0,
+) -> SphereFit:
+    """Fit a sphere to a wheel without inflating it to the bounding sphere.
+
+    A tire is a thin disk. The center is the sample centroid and the axle is
+    the smallest PCA axis. The radius is the ``coverage_quantile`` of distances
+    to that axle, which is the rolling radius. A round cloud (eigenvalues
+    within a factor of four) uses the 3D distance instead, so an existing
+    sphere is not shrunk.
+    """
+    pts = np.asarray(points, dtype=float)
+    if pts.ndim != 2 or pts.shape[1] != 3:
+        raise ValueError(f"points must have shape (N, 3), got {pts.shape}")
+    if pts.shape[0] == 0:
+        raise ValueError("points must be non-empty")
+    if not 0.5 < coverage_quantile <= 1.0:
+        raise ValueError(
+            f"coverage_quantile must be in (0.5, 1], got {coverage_quantile}"
+        )
+
+    centroid = pts.mean(axis=0)
+    pos = tuple(float(x) for x in centroid)
+    if pts.shape[0] == 1:
+        return SphereFit(pos=pos, radius=0.0)
+
+    centered = pts - centroid
+    percentile = float(coverage_quantile) * 100.0
+    cov = (centered.T @ centered) / max(pts.shape[0] - 1, 1)
+    eigvals, eigvecs = np.linalg.eigh(cov)
+    thin = float(eigvals[0])
+    mid = float(eigvals[1])
+    disk = mid > 1e-16 and thin < 0.25 * mid
+    if disk:
+        axle = np.asarray(eigvecs[:, 0], dtype=float)
+        axle = axle / max(float(np.linalg.norm(axle)), 1e-12)
+        axial = centered @ axle
+        radial = np.linalg.norm(centered - np.outer(axial, axle), axis=1)
+    else:
+        radial = np.linalg.norm(centered, axis=1)
+    return SphereFit(pos=pos, radius=float(np.percentile(radial, percentile)))
 
 
 def _quat_wxyz_align_z(direction: np.ndarray) -> np.ndarray:
@@ -731,6 +784,137 @@ class ApproximateWithCapsule(Transform):
                 _copy_contact_attrs(capsule, template)
                 capsule.classname = template.classname
                 capsule.rgba = _default_approx_rgba(template, self.rgba)
+
+        spec.compile()
+        return replace(asset, spec=spec)
+
+
+class ApproximateWithSphere(Transform):
+    """Replace each geom group with a sphere, for mesh wheels.
+
+    Mesh tires are expensive in contact. The fitted radius is the rolling
+    radius (distance to the axle), so the sphere meets the ground where the
+    tire did. It is thicker than the disk; that is the cost of a single
+    primitive. ``classname`` and contact parameters are copied from the first
+    geom in the group.
+
+    Parameters
+    ----------
+    groups:
+        Each inner list is one sphere: the named geoms it approximates.
+    names:
+        Optional sphere geom names (defaults to ``{first}_sphere``). Keep the
+        original collision name when replacing a wheel so ``.*_collision.*``
+        patterns still match.
+    body_paths:
+        Optional host body for each group (defaults to the parent of the first
+        geom). Points are expressed in that body frame at qpos0.
+    replace:
+        If True (default), delete the original geoms after adding the sphere.
+    radius_scale:
+        Multiplier applied to the fitted radius (default 1.0).
+    coverage_quantile:
+        Quantile of axle distances in ``(0.5, 1]`` (default 1.0). ``1.0``
+        keeps the outer tread; lower values ignore a few sticking vertices.
+    rgba:
+        Sphere color; defaults to the first geom's rgba with alpha 0.5.
+
+    Example
+    -------
+    ::
+
+        ApproximateWithSphere(
+            [["FL_foot_collision0"]],
+            names=["FL_foot_collision0"],
+            replace=True,
+        )
+    """
+
+    def __init__(
+        self,
+        groups: list[list[str]],
+        *,
+        names: list[str] | None = None,
+        body_paths: list[str | None] | None = None,
+        replace: bool = True,
+        radius_scale: float = 1.0,
+        coverage_quantile: float = 1.0,
+        rgba: tuple[float, float, float, float] | None = None,
+    ) -> None:
+        if not groups:
+            raise ValueError("ApproximateWithSphere requires at least one geom group")
+        for i, group in enumerate(groups):
+            if not group:
+                raise ValueError(f"ApproximateWithSphere: group {i} is empty")
+        if radius_scale <= 0.0:
+            raise ValueError(f"radius_scale must be > 0, got {radius_scale}")
+        if not 0.5 < coverage_quantile <= 1.0:
+            raise ValueError(
+                f"coverage_quantile must be in (0.5, 1], got {coverage_quantile}"
+            )
+        self.groups = [list(g) for g in groups]
+        self.names = list(names) if names is not None else None
+        self.body_paths = list(body_paths) if body_paths is not None else None
+        self.replace = bool(replace)
+        self.radius_scale = float(radius_scale)
+        self.coverage_quantile = float(coverage_quantile)
+        self.rgba = rgba
+        if self.names is not None and len(self.names) != len(self.groups):
+            raise ValueError("names must have the same length as groups")
+        if self.body_paths is not None and len(self.body_paths) != len(self.groups):
+            raise ValueError("body_paths must have the same length as groups")
+
+    def transform(self, asset: MujocoAsset) -> MujocoAsset:
+        spec = asset.spec.copy()
+        geoms_by_name = {g.name: g for g in spec.geoms if g.name}
+        planned: list[tuple[list[str], str, str, SphereFit, mujoco.MjsGeom]] = []
+
+        model = compile_asset_spec(asset, spec)
+        data = mujoco.MjData(model)
+        mujoco.mj_forward(model, data)
+
+        for group_idx, geom_names in enumerate(self.groups):
+            host_path, _, first_spec_geom = _resolve_group_host(
+                label="ApproximateWithSphere",
+                geom_names=geom_names,
+                geoms_by_name=geoms_by_name,
+                body_paths=self.body_paths,
+                group_idx=group_idx,
+                spec=spec,
+            )
+            points_body = _sample_group_points_in_body(
+                label="ApproximateWithSphere",
+                geom_names=geom_names,
+                host_path=host_path,
+                model=model,
+                data=data,
+            )
+            fit = fit_sphere(points_body, coverage_quantile=self.coverage_quantile)
+            sphere_name = (
+                self.names[group_idx]
+                if self.names is not None
+                else f"{geom_names[0]}_sphere"
+            )
+            planned.append((geom_names, sphere_name, host_path, fit, first_spec_geom))
+
+        for geom_names, sphere_name, host_path, fit, template in planned:
+            if self.replace:
+                for name in geom_names:
+                    geom = geoms_by_name.get(name)
+                    if geom is not None:
+                        spec.delete(geom)
+                        geoms_by_name.pop(name, None)
+
+            host_body = spec.body(host_path)
+            assert host_body is not None
+            sphere = host_body.add_geom()
+            sphere.name = sphere_name
+            sphere.type = mujoco.mjtGeom.mjGEOM_SPHERE
+            sphere.size = (fit.radius * self.radius_scale, 0.0, 0.0)
+            sphere.pos = fit.pos
+            _copy_contact_attrs(sphere, template)
+            sphere.classname = template.classname
+            sphere.rgba = _default_approx_rgba(template, self.rgba)
 
         spec.compile()
         return replace(asset, spec=spec)

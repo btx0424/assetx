@@ -254,10 +254,14 @@ def test_as2w_calf_collision_is_one_capsule() -> None:
         assert calf.group == 3
         assert 0.03 < float(calf.size[0]) < 0.045
         assert 0.08 < float(calf.size[1]) < 0.12
-        for part in ("thigh", "hip", "foot"):
+        for part in ("thigh", "hip"):
             geom = asset.spec.geom(f"{leg}_{part}_collision0")
             assert geom is not None and geom.type == mujoco.mjtGeom.mjGEOM_MESH
             assert geom.group == 3
+        wheel = asset.spec.geom(f"{leg}_foot_collision0")
+        assert wheel is not None and wheel.type == mujoco.mjtGeom.mjGEOM_SPHERE
+        assert wheel.group == 3
+        assert 0.07 < float(wheel.size[0]) < 0.11
     for name in ("base_link_collision0", "JT128_collision0"):
         geom = asset.spec.geom(name)
         assert geom is not None and geom.type == mujoco.mjtGeom.mjGEOM_MESH

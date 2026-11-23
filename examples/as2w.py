@@ -2,10 +2,9 @@
 
 ``as2w_description`` ships ``as2w.urdf`` only. The URDF is fixed to the world,
 so the MJCF adds ``floating_base_joint``. Calf collision meshes are straight
-enough for one capsule. The thigh is a bent link with a motor housing: full
-coverage cuts into the hip, and a thinner capsule still rounds through the
-knee, so those meshes stay. Hips, wheels, the torso, and the JT128 lidar are
-not tubes.
+enough for one capsule. Wheel collision meshes become spheres with the tire's
+rolling radius; a mesh tire is expensive in contact. The thigh is a bent link
+with a motor housing, so it stays a mesh, as do the hips, torso, and lidar.
 """
 
 from __future__ import annotations
@@ -18,6 +17,7 @@ from pathlib import Path
 from assetx import (
     AddJoint,
     ApproximateWithCapsule,
+    ApproximateWithSphere,
     Compose,
     JointCfg,
     MujocoAsset,
@@ -87,6 +87,11 @@ def build_as2w(vendor_dir: Path) -> MujocoAsset:
                 replace=True,
                 coverage_quantile=0.95,
                 radius_scale=0.9,
+            ),
+            ApproximateWithSphere(
+                [[f"{leg}_foot_collision0"] for leg in _LEGS],
+                names=[f"{leg}_foot_collision0" for leg in _LEGS],
+                replace=True,
             ),
         ]
     ).transform(_asset_from_urdf(vendor_dir))
