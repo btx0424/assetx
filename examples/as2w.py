@@ -19,6 +19,7 @@ from assetx import (
     ApproximateWithCapsule,
     ApproximateWithSphere,
     Compose,
+    FitRoundedWheels,
     JointCfg,
     MujocoAsset,
     NormalizeGeomNames,
@@ -87,6 +88,9 @@ def build_as2w(vendor_dir: Path) -> MujocoAsset:
                 replace=True,
                 coverage_quantile=0.95,
                 radius_scale=0.9,
+            ),
+            FitRoundedWheels(
+                [[f"{leg}_foot_collision0"] for leg in _LEGS],
             ),
             ApproximateWithSphere(
                 [[f"{leg}_foot_collision0"] for leg in _LEGS],

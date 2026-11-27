@@ -40,10 +40,17 @@ def test_m20s_keeps_wheel_cylinders() -> None:
     assert list(asset.spec.sensors) == []
     assert asset.spec.geom("floor") is None
 
+    fits = {fit.body: fit for fit in asset.metadata["rounded_wheels"]}
     for leg in ("fl", "fr", "hl", "hr"):
         wheel = asset.spec.geom(f"{leg}_wheel_collision0")
         assert wheel is not None
         assert wheel.type == mujoco.mjtGeom.mjGEOM_CYLINDER
+        fit = fits[f"{leg}_wheel"]
+        assert fit.geoms == (f"{leg}_wheel_collision0",)
+        assert fit.radius == pytest.approx(0.09)
+        assert fit.half_width == pytest.approx(0.027)
+        assert fit.center == pytest.approx((0.0, 0.0, 0.0), abs=1e-6)
+        assert fit.axis == pytest.approx((0.0, 1.0, 0.0), abs=1e-6)
         hip = asset.spec.geom(f"{leg}_hipx_collision0")
         knee = asset.spec.geom(f"{leg}_knee_collision1")
         assert hip is not None and hip.type == mujoco.mjtGeom.mjGEOM_CAPSULE

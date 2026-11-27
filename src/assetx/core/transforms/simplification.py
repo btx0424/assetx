@@ -920,6 +920,220 @@ class ApproximateWithSphere(Transform):
         return replace(asset, spec=spec)
 
 
+@dataclass(frozen=True)
+class RoundedWheelFit:
+    """Disk swept by a sphere, in the host body frame.
+
+    ``radius`` is the rolling radius. ``half_width`` is the sphere radius, and
+    the axial half-extent of the solid. ``center`` lies on the spin ``axis``.
+    """
+
+    body: str
+    geoms: tuple[str, ...]
+    radius: float
+    half_width: float
+    center: tuple[float, float, float]
+    axis: tuple[float, float, float]
+
+
+def fit_rounded_wheel(
+    points: np.ndarray,
+    axis: tuple[float, float, float] | np.ndarray,
+    *,
+    coverage_quantile: float = 1.0,
+) -> tuple[
+    tuple[float, float, float],
+    tuple[float, float, float],
+    float,
+    float,
+]:
+    """Fit a rounded wheel to points already expressed in the body frame.
+
+    The spin axis is fixed. Its line passes through the center of the point
+    extent in the plane normal to that axis, so a tire mounted outboard of the
+    body origin keeps that offset and a few extra samples on one side do not
+    pull the axle. ``radius`` is the ``coverage_quantile`` of distances to the
+    axis. ``half_width`` is half the axial extent at the same quantile, which
+    is the sphere radius of the disk sweep.
+    """
+    pts = np.asarray(points, dtype=float)
+    if pts.ndim != 2 or pts.shape[1] != 3:
+        raise ValueError(f"points must have shape (N, 3), got {pts.shape}")
+    if pts.shape[0] < 4:
+        raise ValueError(f"rounded wheel fit needs at least 4 points, got {pts.shape[0]}")
+    if not 0.5 < coverage_quantile <= 1.0:
+        raise ValueError(
+            f"coverage_quantile must be in (0.5, 1], got {coverage_quantile}"
+        )
+    direction = np.asarray(axis, dtype=float).reshape(3)
+    norm = float(np.linalg.norm(direction))
+    if norm < 1e-12:
+        raise ValueError("rounded wheel axis must be non-zero")
+    direction = direction / norm
+
+    axial = pts @ direction
+    perp = pts - np.outer(axial, direction)
+    helper = np.array([1.0, 0.0, 0.0]) if abs(direction[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+    lateral = np.cross(direction, helper)
+    lateral = lateral / float(np.linalg.norm(lateral))
+    binormal = np.cross(direction, lateral)
+    plane = np.stack((perp @ lateral, perp @ binormal), axis=1)
+    percentile = float(coverage_quantile) * 100.0
+    tail = (1.0 - float(coverage_quantile)) * 50.0
+    plane_lo = np.percentile(plane, tail, axis=0)
+    plane_hi = np.percentile(plane, 100.0 - tail, axis=0)
+    plane_mid = 0.5 * (plane_lo + plane_hi)
+    axis_origin = plane_mid[0] * lateral + plane_mid[1] * binormal
+    radial = np.linalg.norm(perp - axis_origin, axis=1)
+    lo = float(np.percentile(axial, tail))
+    hi = float(np.percentile(axial, 100.0 - tail))
+    center_t = 0.5 * (lo + hi)
+    half_width = 0.5 * (hi - lo)
+    radius = float(np.percentile(radial, percentile))
+    center = axis_origin + center_t * direction
+    return (
+        tuple(float(x) for x in center),
+        tuple(float(x) for x in direction),
+        radius,
+        half_width,
+    )
+
+
+def _rounded_wheel_from_cylinder(
+    geom: mujoco.MjsGeom,
+    axis: np.ndarray,
+) -> tuple[tuple[float, float, float], tuple[float, float, float], float, float] | None:
+    """Exact fit when ``geom`` is one cylinder spinning about ``axis``."""
+    if int(geom.type) != int(mujoco.mjtGeom.mjGEOM_CYLINDER):
+        return None
+    rotation = sRot.from_quat(np.asarray(geom.quat, dtype=float), scalar_first=True)
+    cyl_axis = np.asarray(rotation.apply([0.0, 0.0, 1.0]), dtype=float)
+    cyl_axis = cyl_axis / max(float(np.linalg.norm(cyl_axis)), 1e-12)
+    if abs(float(np.dot(cyl_axis, axis))) < 1.0 - 1e-4:
+        raise ValueError(
+            f"cylinder {geom.name!r} axis {tuple(float(x) for x in cyl_axis)} "
+            f"is not aligned with {tuple(float(x) for x in axis)}"
+        )
+    radius = float(geom.size[0])
+    half_width = float(geom.size[1])
+    center = tuple(float(x) for x in geom.pos)
+    return center, tuple(float(x) for x in axis), radius, half_width
+
+
+class FitRoundedWheels(Transform):
+    """Record a rounded-wheel fit for each geom group without editing geoms.
+
+    A rounded wheel is not a MuJoCo primitive, so the MJCF collision geom is
+    left unchanged. The fit is stored on ``asset.metadata["rounded_wheels"]``
+    and ``MujocoAsset.save`` writes it to ``rounded_wheels.json``.
+
+    A group that is a single cylinder uses that cylinder's radius, half-length,
+    and center. Any other group is fit from its mesh vertices in the host body
+    frame. The spin axis is that body's axis (default +Y).
+
+    Parameters
+    ----------
+    groups:
+        Each inner list is one wheel.
+    body_paths:
+        Optional host body for each group (defaults to the parent of the first
+        geom).
+    axis:
+        Spin axis in the host body frame (default ``(0, 1, 0)``).
+    coverage_quantile:
+        Quantile of radial and axial extent in ``(0.5, 1]`` (default 1.0).
+        Cylinder groups ignore it and use the primitive size.
+    """
+
+    def __init__(
+        self,
+        groups: list[list[str]],
+        *,
+        body_paths: list[str | None] | None = None,
+        axis: tuple[float, float, float] = (0.0, 1.0, 0.0),
+        coverage_quantile: float = 1.0,
+    ) -> None:
+        if not groups:
+            raise ValueError("FitRoundedWheels requires at least one geom group")
+        for i, group in enumerate(groups):
+            if not group:
+                raise ValueError(f"FitRoundedWheels: group {i} is empty")
+        direction = np.asarray(axis, dtype=float).reshape(3)
+        norm = float(np.linalg.norm(direction))
+        if norm < 1e-12:
+            raise ValueError("axis must be non-zero")
+        if not 0.5 < coverage_quantile <= 1.0:
+            raise ValueError(
+                f"coverage_quantile must be in (0.5, 1], got {coverage_quantile}"
+            )
+        self.groups = [list(g) for g in groups]
+        self.body_paths = list(body_paths) if body_paths is not None else None
+        self.axis = tuple(float(x) for x in (direction / norm))
+        self.coverage_quantile = float(coverage_quantile)
+        if self.body_paths is not None and len(self.body_paths) != len(self.groups):
+            raise ValueError("body_paths must have the same length as groups")
+
+    def transform(self, asset: MujocoAsset) -> MujocoAsset:
+        spec = asset.spec
+        geoms_by_name = {g.name: g for g in spec.geoms if g.name}
+        axis = np.asarray(self.axis, dtype=float)
+        fits: list[RoundedWheelFit] = []
+
+        model = compile_asset_spec(asset, spec)
+        data = mujoco.MjData(model)
+        mujoco.mj_forward(model, data)
+
+        for group_idx, geom_names in enumerate(self.groups):
+            host_path, _, first_geom = _resolve_group_host(
+                label="FitRoundedWheels",
+                geom_names=geom_names,
+                geoms_by_name=geoms_by_name,
+                body_paths=self.body_paths,
+                group_idx=group_idx,
+                spec=spec,
+            )
+            analytic = None
+            if len(geom_names) == 1:
+                analytic = _rounded_wheel_from_cylinder(first_geom, axis)
+            if analytic is None:
+                points = _sample_group_hull_points_in_body(
+                    label="FitRoundedWheels",
+                    geom_names=geom_names,
+                    host_path=host_path,
+                    model=model,
+                    data=data,
+                )
+                center, fitted_axis, radius, half_width = fit_rounded_wheel(
+                    points, axis, coverage_quantile=self.coverage_quantile
+                )
+            else:
+                center, fitted_axis, radius, half_width = analytic
+            if not 0.0 < half_width < radius:
+                raise ValueError(
+                    f"FitRoundedWheels: {host_path} fit has radius {radius} "
+                    f"and half_width {half_width}; need 0 < half_width < radius"
+                )
+            fits.append(
+                RoundedWheelFit(
+                    body=host_path,
+                    geoms=tuple(geom_names),
+                    radius=radius,
+                    half_width=half_width,
+                    center=center,
+                    axis=fitted_axis,
+                )
+            )
+
+        previous = list(asset.metadata.get("rounded_wheels", ()))
+        bodies = {fit.body for fit in previous}
+        overlap = [fit.body for fit in fits if fit.body in bodies]
+        if overlap:
+            raise ValueError(f"FitRoundedWheels: body already fitted: {overlap}")
+        metadata = dict(asset.metadata)
+        metadata["rounded_wheels"] = tuple(previous + fits)
+        return replace(asset, metadata=metadata)
+
+
 def _is_visual_geom(geom: mujoco.MjsGeom) -> bool:
     return int(geom.contype) == 0 and int(geom.conaffinity) == 0
 

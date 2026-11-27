@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
+import json
 import shutil
 import xml.etree.ElementTree as ET
 from typing import Any, Literal
@@ -20,6 +21,24 @@ def _convert_mesh_file(src: Path, dest: Path, mesh_format: str) -> None:
     if not isinstance(mesh, trimesh.Trimesh) or len(mesh.faces) == 0:
         raise ValueError(f"Cannot convert {src} to {mesh_format}: no triangles")
     mesh.export(str(dest), file_type=mesh_format)
+
+
+def _write_rounded_wheels(path: Path, wheels: Any) -> None:
+    """Write ``FitRoundedWheels`` records beside ``model.xml``."""
+    payload = {
+        "wheels": [
+            {
+                "body": wheel.body,
+                "geoms": list(wheel.geoms),
+                "radius": wheel.radius,
+                "half_width": wheel.half_width,
+                "center": list(wheel.center),
+                "axis": list(wheel.axis),
+            }
+            for wheel in wheels
+        ]
+    }
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
 def _local_tag(tag: str) -> str:
@@ -89,6 +108,8 @@ class MujocoAsset:
     xml_path: Path
     spec: mujoco.MjSpec
     meshdir: Path
+    # Sidecar annotations. ``rounded_wheels`` is written by ``FitRoundedWheels``.
+    metadata: dict[str, Any] = field(default_factory=dict, compare=False, hash=False)
     # Optional lifetime hook (kept for API compat; assemble no longer uses temp).
     _tmpdir: Any = field(default=None, repr=False, compare=False, hash=False)
 
@@ -310,4 +331,9 @@ class MujocoAsset:
                 )
             mjcf_to_usd(output_xml, root / "usd")
 
-        return MujocoAsset.from_file(output_xml)
+        saved = MujocoAsset.from_file(output_xml)
+        wheels = self.metadata.get("rounded_wheels")
+        if wheels:
+            saved = replace(saved, metadata=dict(self.metadata))
+            _write_rounded_wheels(root / "rounded_wheels.json", wheels)
+        return saved

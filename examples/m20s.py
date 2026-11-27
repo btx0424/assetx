@@ -14,6 +14,7 @@ from pathlib import Path
 
 from assetx import (
     Compose,
+    FitRoundedWheels,
     MujocoAsset,
     NormalizeGeomNames,
     NormalizeJointNames,
@@ -62,6 +63,9 @@ def build_m20s(vendor_dir: Path) -> MujocoAsset:
             # Wheel half-length is 2.7 cm against a 9 cm radius, so a capsule
             # would add caps and turn the tire into a 23 cm ball.
             ReplaceCylinderWithCapsule(exclude=[".*_wheel"]),
+            FitRoundedWheels(
+                [[f"{leg}_wheel_collision0"] for leg in ("fl", "fr", "hl", "hr")]
+            ),
         ]
     ).transform(MujocoAsset.from_file(vendor_dir / M20S_MJCF))
 
